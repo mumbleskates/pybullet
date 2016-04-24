@@ -51,61 +51,76 @@ weechat.register(
 
 # Configuration #
 
+def option_string(value):
+    return value
+
+
+def option_boolean(value):
+    return value.lower() in ("on", "yes", "y", "true", "t", "1")
+
+
+def option_integer(value):
+    try:
+        return int(value)
+    except ValueError:
+        return 0
+
+
 # options (default, type, description)
 config = {
     'api_secret': (
         "",
-        weechat.config_string,
+        option_string,
         "PushBullet access token"
     ),
 
     'notification_title': (
         "weechat",
-        weechat.config_string,
+        option_string,
         "Title for notifications sent"
     ),
 
     'only_when_away': (
         False,
-        weechat.config_boolean,
+        option_boolean,
         "Only send notifications when away (default: off)"
     ),
 
     'highlights': (
         True,
-        weechat.config_boolean,
+        option_boolean,
         "Send notifications for highlights (default: on)"
     ),
 
     'privmsg': (
         True,
-        weechat.config_boolean,
+        option_boolean,
         "Send notifications for private messages (default: on)"
     ),
 
     'displayed_messages': (
         3,
-        weechat.config_integer,
+        option_integer,
         "Number of messages for which to display the full text (default: 3)"
     ),
 
     'count_limit': (
         10,
-        weechat.config_integer,
+        option_integer,
         "More than this many messages will be reported as 'many' instead of a "
         "specific number of messages (default: 10)"
     ),
 
     'short_buffer_name': (
         False,
-        weechat.config_boolean,
+        option_boolean,
         "Use the short name of the buffer rather than the long one "
         "(default: off)"
     ),
 
     'debug': (
         True,
-        weechat.config_boolean,
+        option_boolean,
         "Print debug info while the app is running"
     ),
 }
@@ -150,6 +165,7 @@ init_config()
 
 def config_cb(data, option, value):
     """Called when a config option is changed."""
+    debug("Config callback: {0} {1} {2}".format(data, option, value))
     if data != "config":
         debug("Got wrong data in config_cb: {0}".format(data))
         return weechat.WEECHAT_RC_ERROR
