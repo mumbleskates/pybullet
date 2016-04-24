@@ -258,7 +258,7 @@ class Notification(object):
                 if res.json()['dismissed']:
                     # reset self
                     debug("Push for {0} was dismissed".format(self.buffer_show))
-                    self.messages.clear()
+                    del self.messages[:]
                     self.count = 0
                     self.iden = None
             except (JSONDecodeError, KeyError) as ex:
