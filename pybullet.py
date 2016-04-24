@@ -51,27 +51,6 @@ weechat.register(
 
 # Configuration #
 
-def str_option(value):
-    return value
-
-
-def int_option(value):
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return 0
-    else:
-        return str(value)
-
-
-def bool_option(value):
-    if isinstance(value, bool):
-        return "on" if value else "off"
-    else:
-        return weechat.config_boolean(value)
-
-
 # options (default, type, description)
 config = {
     'api_secret': (
@@ -232,10 +211,12 @@ class Notification(object):
         except RequestException as ex:
             debug("Bad error while getting push info: {0}".format(ex))
             return
+
         if res.status_code == 200:
             try:
                 if res.json()['dismissed']:
                     # reset self
+                    debug("Push for {0} was dismissed".format(self.buffer_show))
                     self.messages.clear()
                     self.count = 0
                     self.iden = None
@@ -246,26 +227,31 @@ class Notification(object):
 
     def repost(self):
         """Delete this notification's current push, then post a new one."""
-        if not self.iden:
-            return
-        res = session.delete(BULLET_URL + "pushes/{0}".format(self.iden))
-        if res.status_code not in (200, 404):
-            debug(
-                "Failed to delete pushes/{0} with status code {1}"
-                .format(self.iden, res.status_code)
-            )
-        else:
-            self.iden = None
+        debug("Reposting for {0} from iden {1}".format(self.buffer_show, self.iden))
+        if self.iden:
+            res = session.delete(BULLET_URL + "pushes/{0}".format(self.iden))
+            if res.status_code not in (200, 404):
+                debug(
+                    "Failed to delete pushes/{0} with status code {1}"
+                    .format(self.iden, res.status_code)
+                )
+            else:
+                self.iden = None
 
         # Now post the new push
-        res = session.post(
-            BULLET_URL + "pushes",
-            headers={'Access-Token': config['api_secret']},
-            json=self.json()
-        )
+        try:
+            res = session.post(
+                BULLET_URL + "pushes",
+                headers={'Access-Token': config['api_secret']},
+                json=self.json()
+            )
+        except RequestException as ex:
+            debug("Bad error while posting push: {0}".format(ex))
+            return
         if res.status_code == 200:
             try:
                 self.iden = res.json()['iden']
+                debug("Got new iden {0}".format(self.iden))
             except (JSONDecodeError, KeyError) as ex:
                 debug("Error reading push creation response: {0}".format(ex))
         else:
