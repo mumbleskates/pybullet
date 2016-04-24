@@ -146,6 +146,7 @@ def config_cb(data, option, value):
         return weechat.WEECHAT_RC_ERROR
     if option in config:
         config[option] = config_types[option](value)
+        debug('Option "{0}" set to "{1}" as {2}'.format(option, value, repr(config[option])))
     return weechat.WEECHAT_RC_OK
 
 
@@ -335,3 +336,5 @@ weechat.hook_config(
     'config_cb',                                # name of callback function
     "config"                                    # data given to callback function
 )
+
+weechat.prnt("", "{0}: loaded and running".format(NAME))
