@@ -150,8 +150,6 @@ def config_as_str(value):
 def init_config():
     """Perform initial configuration of the application settings"""
     for option, (default_value, config_type, description) in config.items():
-        x = weechat.config_get_plugin(option)
-        debug("Raw value for {0} is {1} (type {2})".format(option, repr(x), type(x)))
         # set config type
         config_types[option] = config_type
         # set descriptions for options
@@ -224,6 +222,8 @@ class Notification(object):
         if changed:
             # Notification's content has changed, update the push
             self.repost()
+        else:
+            debug("Notification unchanged, not pushing")
 
     def json(self):
         """Create the notification's push data for its current state"""
@@ -245,7 +245,10 @@ class Notification(object):
         if not self.iden:
             return
         try:
-            res = session.get(BULLET_URL + "pushes/{0}".format(self.iden))
+            res = session.get(
+                BULLET_URL + "pushes/{0}".format(self.iden),
+                headers={'Access-Token': config['api_secret']}
+            )
         except RequestException as ex:
             debug("Bad error while getting push info: {0}".format(ex))
             return
