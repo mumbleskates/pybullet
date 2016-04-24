@@ -55,57 +55,57 @@ weechat.register(
 config = {
     'api_secret': (
         "",
-        lambda x: x,  # weechat.config_string,
+        weechat.config_string,
         "PushBullet access token"
     ),
 
     'notification_title': (
         "weechat",
-        lambda x: x,  # weechat.config_string,
+        weechat.config_string,
         "Title for notifications sent"
     ),
 
     'only_when_away': (
         False,
-        lambda x: bool(int(x)),  # weechat.config_boolean,
+        weechat.config_boolean,
         "Only send notifications when away (default: off)"
     ),
 
     'highlights': (
         True,
-        lambda x: bool(int(x)),  # weechat.config_boolean,
+        weechat.config_boolean,
         "Send notifications for highlights (default: on)"
     ),
 
     'privmsg': (
         True,
-        lambda x: bool(int(x)),  # weechat.config_boolean,
+        weechat.config_boolean,
         "Send notifications for private messages (default: on)"
     ),
 
     'displayed_messages': (
         3,
-        lambda x: int(x),  # weechat.config_integer,
+        weechat.config_integer,
         "Number of messages for which to display the full text (default: 3)"
     ),
 
     'count_limit': (
         10,
-        lambda x: int(x),  # weechat.config_integer,
+        weechat.config_integer,
         "More than this many messages will be reported as 'many' instead of a "
         "specific number of messages (default: 10)"
     ),
 
     'short_buffer_name': (
         False,
-        lambda x: bool(int(x)),  # weechat.config_boolean,
+        weechat.config_boolean,
         "Use the short name of the buffer rather than the long one "
         "(default: off)"
     ),
 
     'debug': (
         True,
-        lambda x: bool(int(x)),  # weechat.config_boolean,
+        weechat.config_boolean,
         "Print debug info while the app is running"
     ),
 }
@@ -130,6 +130,8 @@ def config_as_str(value):
 def init_config():
     """Perform initial configuration of the application settings"""
     for option, (default_value, config_type, description) in config.items():
+        x = weechat.config_get_plugin(option)
+        debug("Raw value for {0} is {1} (type {2})".format(option, repr(x), type(x)))
         # set config type
         config_types[option] = config_type
         # set descriptions for options
