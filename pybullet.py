@@ -104,7 +104,7 @@ config = {
     ),
 
     'debug': (
-        False,
+        True,
         weechat.config_boolean,
         "Print debug info while the app is running"
     ),
@@ -133,8 +133,10 @@ def init_config():
         if not weechat.config_is_set_plugin(option):
             weechat.config_set_plugin(option, config_as_str(default_value))
             config[option] = default_value
+            debug('Option "{0}" was not set, is now {1}'.format(option, repr(default_value)))
         else:
             config[option] = config_type(weechat.config_get_plugin(option))
+            debug('Option "{0}" set to {1}'.format(option, repr(config[option])))
 
 init_config()
 
@@ -147,6 +149,8 @@ def config_cb(data, option, value):
     if option in config:
         config[option] = config_types[option](value)
         debug('Option "{0}" set to "{1}" as {2}'.format(option, value, repr(config[option])))
+    else:
+        debug('Option "{0}" does not seem to be in config')
     return weechat.WEECHAT_RC_OK
 
 
