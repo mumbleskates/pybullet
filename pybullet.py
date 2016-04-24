@@ -114,6 +114,14 @@ config = {
 config_types = {}
 
 
+def config_as_str(value):
+    """Convert config defaults to strings for weechat"""
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    else:
+        return str(value)
+
+
 def init_config():
     """Perform initial configuration of the application settings"""
     for option, (default_value, config_type, description) in config.items():
@@ -123,7 +131,7 @@ def init_config():
         weechat.config_set_desc_plugin(option, description)
         # setdefault the script's options from weechat
         if not weechat.config_is_set_plugin(option):
-            weechat.config_set_plugin(option, default_value)
+            weechat.config_set_plugin(option, config_as_str(default_value))
             config[option] = default_value
         else:
             config[option] = config_type(weechat.config_get_plugin(option))
