@@ -146,6 +146,7 @@ def config_cb(data, option, value):
         return weechat.WEECHAT_RC_ERROR
     if option in config:
         config[option] = config_types[option](value)
+    return weechat.WEECHAT_RC_OK
 
 
 def debug(text):
