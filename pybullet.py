@@ -16,6 +16,7 @@ except ImportError:
 
 from itertools import chain
 
+import urllib3.contrib.pyopenssl
 import requests
 from requests.exceptions import RequestException
 import weechat
@@ -33,6 +34,9 @@ __doc__ = (
 
 BULLET_URL = "https://api.pushbullet.com/v2/"
 
+
+# https://urllib3.readthedocs.org/en/latest/security.html#pyopenssl
+urllib3.contrib.pyopenssl.inject_into_urllib3()
 session = requests.session()
 session.headers['User-Agent'] = "{0}/{1}".format(NAME, VERSION)
 
@@ -131,7 +135,7 @@ config_types = {}
 
 
 def debug(text):
-    if True:  # config['debug']:
+    if config['debug']:
         weechat.prnt("", "{0}: {1}".format(NAME, text))
 
 
@@ -206,7 +210,7 @@ class Notification(object):
 
         # remember message if it will be displayed
         to_display = config['displayed_messages']
-        if to_display != 0 and to_display < len(self.messages):
+        if to_display == 0 or len(self.messages) < to_display:
             self.messages.append(message)
             changed = True
 
@@ -263,7 +267,10 @@ class Notification(object):
         """Delete this notification's current push, then post a new one."""
         debug("Reposting for {0} from iden {1}".format(self.buffer_show, self.iden))
         if self.iden:
-            res = session.delete(BULLET_URL + "pushes/{0}".format(self.iden))
+            res = session.delete(
+                BULLET_URL + "pushes/{0}".format(self.iden),
+                headers={'Access-Token': config['api_secret']}
+            )
             if res.status_code not in (200, 404):
                 debug(
                     "Failed to delete pushes/{0} with status code {1}"
