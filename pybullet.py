@@ -8,6 +8,7 @@ except NameError:
     # noinspection PyShadowingBuiltins,PyUnboundLocalVariable
     str = str
 
+import json
 try:
     from json import JSONDecodeError
 except ImportError:
@@ -275,8 +276,11 @@ class Notification(object):
         try:
             res = session.post(
                 BULLET_URL + "pushes",
-                headers={'Access-Token': config['api_secret']},
-                json=self.json()
+                headers={
+                    'Access-Token': config['api_secret'],
+                    'Content-Type': "application/json",
+                },
+                data=json.dumps(self.json())
             )
         except RequestException as ex:
             debug("Bad error while posting push: {0}".format(ex))
