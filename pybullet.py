@@ -166,6 +166,7 @@ init_config()
 def config_cb(data, option, value):
     """Called when a config option is changed."""
     debug("Config callback: {0} {1} {2}".format(data, option, value))
+    option = option.rsplit(".", 1)[-1]
     if data != "config":
         debug("Got wrong data in config_cb: {0}".format(data))
         return weechat.WEECHAT_RC_ERROR
@@ -173,7 +174,7 @@ def config_cb(data, option, value):
         config[option] = config_types[option](value)
         debug('Option "{0}" set to "{1}" as {2}'.format(option, value, repr(config[option])))
     else:
-        debug('Option "{0}" does not seem to be in config')
+        debug('Option "{0}" does not seem to be in config'.format(option))
     return weechat.WEECHAT_RC_OK
 
 
