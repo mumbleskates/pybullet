@@ -353,8 +353,8 @@ def print_cb(data, buffer_ptr, date, tags, is_displayed, is_highlight, prefix, m
             "<{0}> {1}".format(prefix, message)
         )
 
-    else:
-        debug("Not dispatching notification for {0} from {1}".format(buffer_name, prefix))
+    # else:
+    #     debug("Not dispatching notification for {0} from {1}".format(buffer_name, prefix))
 
     return weechat.WEECHAT_RC_OK
 
