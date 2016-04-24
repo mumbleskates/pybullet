@@ -337,4 +337,4 @@ weechat.hook_config(
     "config"                                    # data given to callback function
 )
 
-weechat.prnt("", "{0}: loaded and running".format(NAME))
+weechat.prnt("", "{0}: loaded and running. Debug is {1}".format(NAME, config_as_str(config['debug'])))
