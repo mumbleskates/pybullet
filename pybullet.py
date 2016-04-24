@@ -315,10 +315,10 @@ def print_cb(data, buffer_ptr, date, tags, is_displayed, is_highlight, prefix, m
         debug("Got wrong data in print_cb: {0}".format(data))
         return weechat.WEECHAT_RC_ERROR
 
-    debug(
-        "print_cb: date={0} tags={1} is_displayed={2} is_highlight={3} prefix={4} message {5}"
-        .format(date, tags, is_displayed, is_highlight, prefix, message)
-    )
+    # debug(
+    #     "print_cb: date={0} tags={1} is_displayed={2} is_highlight={3} prefix={4} message {5}"
+    #     .format(date, tags, is_displayed, is_highlight, prefix, message)
+    # )
 
     buffer_name = weechat.buffer_get_string(buffer_ptr, 'full_name')
 
@@ -326,16 +326,18 @@ def print_cb(data, buffer_ptr, date, tags, is_displayed, is_highlight, prefix, m
     if config['only_when_away'] and not weechat.buffer_get_string(buffer_ptr, 'localvar_away'):
         debug("Message for {0} ignored due to away status".format(buffer_name))
 
+    # sent by me: ignore
+    elif weechat.buffer_get_string(buffer_ptr, 'localvar_nick') == prefix:
+        pass
+
     # highlight or private message
     elif (
         (  # highlight
-            int(is_highlight) and
-            config['highlights']
-        ) or
-        (  # private message
+            config['highlights'] and
+            int(is_highlight)
+        ) or (  # private message
             config['privmsg'] and
-            weechat.buffer_get_string(buffer_ptr, 'localvar_type') == "private" and  # private convo
-            weechat.buffer_get_string(buffer_ptr, 'localvar_nick') != prefix  # not sent by me
+            weechat.buffer_get_string(buffer_ptr, 'localvar_type') == "private"
         )
     ):
         if config['short_buffer_name']:
