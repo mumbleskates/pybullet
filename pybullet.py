@@ -114,6 +114,11 @@ config = {
 config_types = {}
 
 
+def debug(text):
+    if True:  # config['debug']:
+        weechat.prnt("", "{0}: {1}".format(NAME, text))
+
+
 def config_as_str(value):
     """Convert config defaults to strings for weechat"""
     if isinstance(value, bool):
@@ -152,11 +157,6 @@ def config_cb(data, option, value):
     else:
         debug('Option "{0}" does not seem to be in config')
     return weechat.WEECHAT_RC_OK
-
-
-def debug(text):
-    if True:  # config['debug']:
-        weechat.prnt("", "{0}: {1}".format(NAME, text))
 
 
 # Notification functions #
