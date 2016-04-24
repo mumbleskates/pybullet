@@ -304,7 +304,7 @@ def dispatch_notification(buffer_name, show_buffer_name, message_text):
 
 # inspector doesn't like unused parameters
 # noinspection PyUnusedLocal
-def print_cb(data, buffer_ptr, date, tag_count, is_displayed, is_highlight, prefix, message):
+def print_cb(data, buffer_ptr, date, tags, is_displayed, is_highlight, prefix, message):
     """
     Called from weechat when something is printed.
 
@@ -316,8 +316,8 @@ def print_cb(data, buffer_ptr, date, tag_count, is_displayed, is_highlight, pref
         return weechat.WEECHAT_RC_ERROR
 
     debug(
-        "print_cb: date={0} tag_count={1} is_displayed={2} is_highlight={3}"
-        .format(date, tag_count, is_displayed, is_highlight)
+        "print_cb: date={0} tags={1} is_displayed={2} is_highlight={3} prefix={4} message {5}"
+        .format(date, tags, is_displayed, is_highlight, prefix, message)
     )
 
     buffer_name = weechat.buffer_get_string(buffer_ptr, 'full_name')
@@ -328,8 +328,15 @@ def print_cb(data, buffer_ptr, date, tag_count, is_displayed, is_highlight, pref
 
     # highlight or private message
     elif (
-        (int(is_highlight) and config['highlights']) or
-        (config['privmsg'])
+        (  # highlight
+            int(is_highlight) and
+            config['highlights']
+        ) or
+        (  # private message
+            config['privmsg'] and
+            weechat.buffer_get_string(buffer_ptr, 'localvar_type') == "private" and  # private convo
+            weechat.buffer_get_string(buffer_ptr, 'localvar_nick') != prefix  # not sent by me
+        )
     ):
         if config['short_buffer_name']:
             show_buffer_name = weechat.buffer_get_string(buffer_ptr, 'short_name')
@@ -345,7 +352,7 @@ def print_cb(data, buffer_ptr, date, tag_count, is_displayed, is_highlight, pref
         )
 
     else:
-        debug("Not dispatching notification for {0}".format(buffer_name))
+        debug("Not dispatching notification for {0} from {1}".format(buffer_name, prefix))
 
     return weechat.WEECHAT_RC_OK
 
