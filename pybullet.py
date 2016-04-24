@@ -33,25 +33,12 @@ __doc__ = (
 )
 
 BULLET_URL = "https://api.pushbullet.com/v2/"
-
+CONFIG_NAMESPACE = "plugins.var.python.{0}.".format(NAME)
 
 # https://urllib3.readthedocs.org/en/latest/security.html#pyopenssl
 urllib3.contrib.pyopenssl.inject_into_urllib3()
 session = requests.session()
 session.headers['User-Agent'] = "{0}/{1}".format(NAME, VERSION)
-
-
-# Registration #
-
-weechat.register(
-    NAME,
-    AUTHOR,
-    str(VERSION),
-    LICENSE,
-    __doc__,  # description
-    "",  # shutdown_function
-    ""  # charset, default utf-8
-)
 
 
 # Configuration #
@@ -69,6 +56,19 @@ def option_integer(value):
         return int(value)
     except ValueError:
         return 0
+
+
+def debug(text):
+    if config['debug']:
+        weechat.prnt("", "{0}: {1}".format(NAME, text))
+
+
+def config_as_str(value):
+    """Convert config defaults to strings for weechat"""
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    else:
+        return str(value)
 
 
 # options (default, type, description)
@@ -129,22 +129,8 @@ config = {
         "Print debug info while the app is running"
     ),
 }
-
 # functions to convert configs read from the application
 config_types = {}
-
-
-def debug(text):
-    if config['debug']:
-        weechat.prnt("", "{0}: {1}".format(NAME, text))
-
-
-def config_as_str(value):
-    """Convert config defaults to strings for weechat"""
-    if isinstance(value, bool):
-        return "on" if value else "off"
-    else:
-        return str(value)
 
 
 def init_config():
@@ -163,16 +149,17 @@ def init_config():
             config[option] = config_type(weechat.config_get_plugin(option))
             debug('Option "{0}" set to {1}'.format(option, repr(config[option])))
 
-init_config()
-
 
 def config_cb(data, option, value):
     """Called when a config option is changed."""
     debug("Config callback: {0} {1} {2}".format(data, option, value))
-    option = option.rsplit(".", 1)[-1]
     if data != "config":
         debug("Got wrong data in config_cb: {0}".format(data))
         return weechat.WEECHAT_RC_ERROR
+    if not option.startswith(CONFIG_NAMESPACE):
+        debug("Got an option from the wrong namespace: {0}".format(option))
+        return weechat.WEECHAT_RC_ERROR
+    option = option[len(CONFIG_NAMESPACE):]
     if option in config:
         config[option] = config_types[option](value)
         debug('Option "{0}" set to "{1}" as {2}'.format(option, value, repr(config[option])))
@@ -328,6 +315,8 @@ def print_cb(data, buffer_ptr, date, tag_count, is_displayed, is_highlight, pref
         debug("Got wrong data in print_cb: {0}".format(data))
         return weechat.WEECHAT_RC_ERROR
 
+    debug("print_cb: date={0} tag_count={1} is_displayed={2} is_highlight={3}")
+
     buffer_name = weechat.buffer_get_string(buffer_ptr, 'full_name')
 
     # away rules: cancel
@@ -336,7 +325,7 @@ def print_cb(data, buffer_ptr, date, tag_count, is_displayed, is_highlight, pref
 
     # highlight or private message
     elif (
-        (is_highlight and config['highlights']) or
+        (int(is_highlight) and config['highlights']) or
         (config['privmsg'])
     ):
         if config['short_buffer_name']:
@@ -358,20 +347,29 @@ def print_cb(data, buffer_ptr, date, tag_count, is_displayed, is_highlight, pref
     return weechat.WEECHAT_RC_OK
 
 
-# Register callbacks #
+if __name__ == '__main__':
+    weechat.register(
+        NAME,
+        AUTHOR,
+        str(VERSION),
+        LICENSE,
+        __doc__,                            # description
+        "",                                 # shutdown_function
+        ""                                  # charset, default utf-8
+    )
+    init_config()
+    weechat.hook_print(
+        "",                                 # buffer (blank: any buffer)
+        "irc_privmsg",                      # print tags to catch
+        "",                                 # message must contain this string
+        1,                                  # 1 if strip colors from message
+        'print_cb',                         # name of callback function
+        "print"                             # data given to callback function
+    )
+    weechat.hook_config(
+        "{0}*".format(CONFIG_NAMESPACE),    # filter for configs to watch
+        'config_cb',                        # name of callback function
+        "config"                            # data given to callback function
+    )
 
-weechat.hook_print(
-    "",                                         # buffer (blank: any buffer)
-    "notify_private,notify_highlight",          # print tags to catch
-    "",                                         # message must contain this string
-    1,                                          # 1 if strip colors from message
-    'print_cb',                                 # name of callback function
-    "print"                                     # data given to callback function
-)
-weechat.hook_config(
-    "plugins.var.python.{0}.*".format(NAME),    # filter for configs to watch
-    'config_cb',                                # name of callback function
-    "config"                                    # data given to callback function
-)
-
-weechat.prnt("", "{0}: loaded and running. Debug is {1}".format(NAME, config_as_str(config['debug'])))
+    weechat.prnt("", "{0}: loaded and running. Debug is {1}".format(NAME, config_as_str(config['debug'])))
