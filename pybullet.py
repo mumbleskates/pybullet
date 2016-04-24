@@ -315,7 +315,10 @@ def print_cb(data, buffer_ptr, date, tag_count, is_displayed, is_highlight, pref
         debug("Got wrong data in print_cb: {0}".format(data))
         return weechat.WEECHAT_RC_ERROR
 
-    debug("print_cb: date={0} tag_count={1} is_displayed={2} is_highlight={3}")
+    debug(
+        "print_cb: date={0} tag_count={1} is_displayed={2} is_highlight={3}"
+        .format(date, tag_count, is_displayed, is_highlight)
+    )
 
     buffer_name = weechat.buffer_get_string(buffer_ptr, 'full_name')
 
