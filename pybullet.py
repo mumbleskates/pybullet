@@ -55,57 +55,57 @@ weechat.register(
 config = {
     'api_secret': (
         "",
-        weechat.config_string,
+        lambda x: x,  # weechat.config_string,
         "PushBullet access token"
     ),
 
     'notification_title': (
         "weechat",
-        weechat.config_string,
+        lambda x: x,  # weechat.config_string,
         "Title for notifications sent"
     ),
 
     'only_when_away': (
         False,
-        weechat.config_boolean,
+        lambda x: bool(int(x)),  # weechat.config_boolean,
         "Only send notifications when away (default: off)"
     ),
 
     'highlights': (
         True,
-        weechat.config_boolean,
+        lambda x: bool(int(x)),  # weechat.config_boolean,
         "Send notifications for highlights (default: on)"
     ),
 
     'privmsg': (
         True,
-        weechat.config_boolean,
+        lambda x: bool(int(x)),  # weechat.config_boolean,
         "Send notifications for private messages (default: on)"
     ),
 
     'displayed_messages': (
         3,
-        weechat.config_integer,
+        lambda x: int(x),  # weechat.config_integer,
         "Number of messages for which to display the full text (default: 3)"
     ),
 
     'count_limit': (
         10,
-        weechat.config_integer,
+        lambda x: int(x),  # weechat.config_integer,
         "More than this many messages will be reported as 'many' instead of a "
         "specific number of messages (default: 10)"
     ),
 
     'short_buffer_name': (
         False,
-        weechat.config_boolean,
+        lambda x: bool(int(x)),  # weechat.config_boolean,
         "Use the short name of the buffer rather than the long one "
         "(default: off)"
     ),
 
     'debug': (
         True,
-        weechat.config_boolean,
+        lambda x: bool(int(x)),  # weechat.config_boolean,
         "Print debug info while the app is running"
     ),
 }
