@@ -151,7 +151,7 @@ def config_cb(data, option, value):
 
 
 def debug(text):
-    if config['debug']:
+    if True:  # config['debug']:
         weechat.prnt("", "{0}: {1}".format(NAME, text))
 
 
