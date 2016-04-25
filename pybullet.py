@@ -156,7 +156,8 @@ config = {
         90,
         option_integer,
         "Be able to notify again at most this many seconds after a notification "
-        "has been dismissed. Not a big deal, leave it high."
+        "has been dismissed. Not a big deal, leave it high. Minimum {0}"
+        .format(MIN_POLL_DELAY)
     ),
 
     'many_messages': (
@@ -323,7 +324,8 @@ class Notification(object):
         seconds = (self.waiting_until - datetime.utcnow()).total_seconds()
         # do not wait more than max_poll_delay seconds, and max_poll_delay cannot be
         # less than MIN_POLL_DELAY
-        seconds = min(seconds, max(config['max_poll_delay'], MIN_POLL_DELAY))
+        if config['max_poll_delay'] > MIN_POLL_DELAY:
+            seconds = min(seconds, config['max_poll_delay'])
         debug("Waiting {0} seconds for {1}".format(seconds, self.buffer))
         if seconds > 0:
             self.wait_hook = weechat.hook_timer(
