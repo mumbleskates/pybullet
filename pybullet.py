@@ -37,6 +37,8 @@ BULLET_URL = "https://api.pushbullet.com/v2/"
 CONFIG_NAMESPACE = "plugins.var.python.{0}.".format(NAME)
 
 TIMER_GRACE = timedelta(seconds=1)
+# minimum effective value for max_poll_delay: never force polling faster than this
+MIN_POLL_DELAY = 20
 
 # https://urllib3.readthedocs.org/en/latest/security.html#pyopenssl
 urllib3.contrib.pyopenssl.inject_into_urllib3()
@@ -115,7 +117,7 @@ config = {
     ),
 
     'ignore_after_talk': (
-        20,
+        10,
         option_integer,
         "For this many seconds after you have talked in a buffer, additional "
         "highlights and PMs will be ignored, assuming you saw them"
@@ -137,14 +139,31 @@ config = {
     ),
 
     'long_spacing': (
-        300,
+        200,
         option_integer,
         "After many unseen messages in a channel, wait at least this long "
         "before notifying again - see many_messages"
     ),
 
+    'increase_spacing': (
+        70,
+        option_integer,
+        "Each time a notification is received on a very busy channel the next "
+        "notification will be delayed this many more seconds. Negative or zero "
+        "means no increase"
+    ),
+
+    'max_poll_delay': (
+        90,
+        option_integer,
+        "Be able to notify again at most this many seconds after a notification "
+        "has been dismissed. This prevents having to possibly wait the full "
+        "duration of a very long delay to see messages that appeared since the "
+        "last notification. Not a big deal, leave it high."
+    ),
+
     'many_messages': (
-        10,
+        8,
         option_integer,
         "After this many messages in a channel, use the long spacing between "
         "notifications - seen long_spacing"
@@ -224,6 +243,8 @@ class Notification(object):
         self.count = 0                          # number of messages
         self.iden = None                        # iden of current push
         self.waiting_until = None               # whether we are delaying before sending
+        self.wait_hook = None                   # hook_timer hook id for our current wait
+        self.bonus_delay = 0                    # total extra delay accrued between notifications
         self.changed = False                    # whether the notification has changed since last posted
         self.self_last_talked = datetime.min    # last time we talked in the buffer
 
@@ -277,10 +298,10 @@ class Notification(object):
         # update count of messages
         self.count += 1
 
-        if not self.waiting_until:
-            self.done_waiting()
-        else:
+        if self.waiting_until:
             pass  # already waiting
+        else:
+            self.send_notification()
 
     def self_talked(self):
         """We talked in the buffer; clear notification, reset status, and set last talked time"""
@@ -303,9 +324,12 @@ class Notification(object):
     def go_wait(self):
         """Set callback hook to wait until our destination time"""
         seconds = (self.waiting_until - datetime.utcnow()).total_seconds()
+        # do not wait more than max_poll_delay seconds, and max_poll_delay cannot be
+        # less than MIN_POLL_DELAY
+        seconds = min(seconds, max(config['max_poll_delay'], MIN_POLL_DELAY))
         debug("Waiting {0} seconds for {1}".format(seconds, self.buffer))
         if seconds > 0:
-            weechat.hook_timer(
+            self.wait_hook = weechat.hook_timer(
                 int(seconds * 1000),    # interval to wait in milliseconds
                 0,                      # seconds alignment
                 1,                      # max calls
@@ -314,35 +338,56 @@ class Notification(object):
             )
         else:  # waiting_until already passed, don't wait at all actually
             self.waiting_until = None
-            self.done_waiting()
+            self.send_notification()
 
     def done_waiting(self):
-        """Timer has returned at approximately the given time"""
+        """Timer has returned at approximately the given time. Only sent from callbacks"""
+        self.wait_hook = None  # done with this
         if self.waiting_until and datetime.utcnow() > self.waiting_until + TIMER_GRACE:
             # we haven't waited long enough, perhaps the timer was increased
-            self.go_wait()
+            # or we are capped at max_poll_delay
+            self.check_dismissal()
+            if self.waiting_until:
+                # still waiting
+                self.go_wait()
+            else:
+                # notification was dismissed and we were reset
+                self.send_notification()
         else:
             debug("Finished waiting for {0}".format(self.buffer))
             self.waiting_until = None
-            if self.changed:
-                self.check_dismissal()
-                self.repost()
-                self.changed = False
-                # we just sent a message, introduce a delay before more are sent
-                if self.count < config['many_messages']:
-                    self.delay(config['min_spacing'])
-                else:
-                    self.delay(config['long_spacing'])
+            self.send_notification()
+
+    def send_notification(self):
+        """Send an updated notification immediately, if one exists"""
+        if self.changed:
+            self.check_dismissal()
+            self.repost()
+            self.changed = False
+            # we just sent a message, introduce a delay before more are sent
+            if self.count < config['many_messages']:
+                self.delay(config['min_spacing'])
+            else:
+                self.delay(config['long_spacing'] + self.bonus_delay)
+                if config['increase_spacing'] > 0:
+                    self.bonus_delay += config['increase_spacing']
 
     def reset(self):
         """Reset the state of this notification as it's been seen or dismissed"""
+        # cancel any current wait
+        if self.wait_hook is not None:
+            debug("Unhooking wait for {0}".format(self.buffer))
+            weechat.unhook(self.wait_hook)
+            self.wait_hook = None
+        self.waiting_until = None
         del self.messages[:]
         self.count = 0
+        self.bonus_delay = 0
         self.iden = None
         self.changed = False
 
     def check_dismissal(self):
-        """Check if this notification's push was dismissed and reset it if so."""
+        """Check if this notification's push was dismissed and reset if so"""
         if not self.iden:
             return
         try:
@@ -354,6 +399,7 @@ class Notification(object):
             debug("Bad error while getting pushes/{0}: {1}".format(self.iden, ex))
             return
 
+        # reset and possibly delete if it's marked as dismissed
         if res.status_code == 200:
             try:
                 if res.json()['dismissed']:
@@ -490,6 +536,8 @@ def print_cb(data, buffer_ptr, timestamp, tags, is_displayed, is_highlight, pref
     return weechat.WEECHAT_RC_OK
 
 
+# inspector doesn't like unused parameters
+# noinspection PyUnusedLocal
 def done_waiting_cb(data, remaining_calls):
     """Callback for hook_timer; data will be set to a tuple of buffer and expected arrival time"""
     Notification.get_for_buffer(data).done_waiting()
