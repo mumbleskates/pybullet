@@ -301,7 +301,7 @@ class Notification(object):
 
     def delay(self, seconds):
         """Ensure that there is a running timer hook for the time <seconds> from now"""
-        after_delay = self.self_last_talked + timedelta(seconds=seconds)
+        after_delay = datetime.utcnow() + timedelta(seconds=seconds)
         if self.waiting_until:
             self.waiting_until = max(self.waiting_until, after_delay)
         else:
