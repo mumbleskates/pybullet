@@ -440,9 +440,13 @@ def print_cb(data, buffer_ptr, timestamp, tags, is_displayed, is_highlight, pref
         debug("Got wrong data in print_cb: {0}".format(data))
         return weechat.WEECHAT_RC_ERROR
 
+    prefix = prefix.decode('utf_8')
+    message = message.decode('utf-8')
+    tags = set(tags.decode('utf-8').split(','))
+
     # debug(
-    #     "print_cb: date={0} tags={1} is_displayed={2} is_highlight={3} prefix={4} message {5}"
-    #     .format(date, tags, is_displayed, is_highlight, prefix, message)
+    #     "print_cb: timestamp={0} tags={1} is_displayed={2} is_highlight={3} prefix={4} message={5}"
+    #     .format(timestamp, tags, is_displayed, is_highlight, prefix, message)
     # )
 
     buffer_name = weechat.buffer_get_string(buffer_ptr, 'full_name')
@@ -452,7 +456,9 @@ def print_cb(data, buffer_ptr, timestamp, tags, is_displayed, is_highlight, pref
         debug("Message for {0} ignored due to away status".format(buffer_name))
 
     # sent by me: clear and delay more messages
-    if weechat.buffer_get_string(buffer_ptr, 'localvar_nick') == prefix:
+    # messages sent by you will have the tag "nick_?" with your localvar nick.
+    # Prefix is unreliable as it may include mode indicator symbols.
+    if "nick_{0}".format(weechat.buffer_get_string(buffer_ptr, 'localvar_nick').decode('utf-8')) in tags:
         debug("Dispatching self talked for {0}".format(buffer_name))
         dispatch_self_talked(buffer_name)
 
