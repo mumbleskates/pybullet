@@ -277,16 +277,8 @@ class Notification(object):
         # update count of messages
         self.count += 1
 
-        # go for the longer delay if we've got lots of messages, but don't aggressively
-        # increase the amount of time being waited just because messages are coming in.
-        # The only thing that should increase the amount of time we are waiting is
-        # self talking in the buffer.
         if not self.waiting_until:
             self.done_waiting()
-            if self.count < config['many_messages']:
-                self.delay(config['min_spacing'])
-            else:
-                self.delay(config['long_spacing'])
         else:
             pass  # already waiting
 
@@ -336,6 +328,11 @@ class Notification(object):
                 self.check_dismissal()
                 self.repost()
                 self.changed = False
+                # we just sent a message, introduce a delay before more are sent
+                if self.count < config['many_messages']:
+                    self.delay(config['min_spacing'])
+                else:
+                    self.delay(config['long_spacing'])
 
     def reset(self):
         """Reset the state of this notification as it's been seen or dismissed"""
