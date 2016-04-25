@@ -149,17 +149,14 @@ config = {
         70,
         option_integer,
         "Each time a notification is received on a very busy channel the next "
-        "notification will be delayed this many more seconds. Negative or zero "
-        "means no increase"
+        "notification will be delayed this many more seconds."
     ),
 
     'max_poll_delay': (
         90,
         option_integer,
         "Be able to notify again at most this many seconds after a notification "
-        "has been dismissed. This prevents having to possibly wait the full "
-        "duration of a very long delay to see messages that appeared since the "
-        "last notification. Not a big deal, leave it high."
+        "has been dismissed. Not a big deal, leave it high."
     ),
 
     'many_messages': (
