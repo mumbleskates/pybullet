@@ -359,7 +359,7 @@ class Notification(object):
 
         if res.status_code == 200:
             try:
-                if res.pushbullet_json()['dismissed']:
+                if res.json()['dismissed']:
                     # reset self
                     debug("Push for {0} was dismissed".format(self.buffer_show))
                     if config['delete_dismissed']:
@@ -410,7 +410,7 @@ class Notification(object):
             return
         if res.status_code == 200:
             try:
-                self.iden = res.pushbullet_json()['iden']
+                self.iden = res.json()['iden']
                 debug("Got new iden {0}".format(self.iden))
             except (JSONDecodeError, KeyError) as ex:
                 debug("Error reading push creation response: {0}".format(ex))
