@@ -487,7 +487,6 @@ def print_cb(data, buffer_ptr, timestamp, tags, is_displayed, is_highlight, pref
 
     prefix = prefix.decode('utf_8')
     message = message.decode('utf-8')
-    tags = set(tags.decode('utf-8').split(','))
 
     # debug(
     #     "print_cb: timestamp={0} tags={1} is_displayed={2} is_highlight={3} prefix={4} message={5}"
@@ -503,6 +502,7 @@ def print_cb(data, buffer_ptr, timestamp, tags, is_displayed, is_highlight, pref
     # sent by me: clear and delay more messages
     # messages sent by you will have the tag "nick_?" with your localvar nick.
     # Prefix is unreliable as it may include mode indicator symbols.
+    tags = tags.decode('utf-8').split(",")
     if "nick_{0}".format(weechat.buffer_get_string(buffer_ptr, 'localvar_nick').decode('utf-8')) in tags:
         debug("Dispatching self talked for {0}".format(buffer_name))
         dispatch_self_talked(buffer_name)
