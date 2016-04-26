@@ -48,6 +48,11 @@ session.headers['User-Agent'] = "{0}/{1}".format(NAME, VERSION)
 
 # Configuration #
 
+def debug(text):
+    if config['debug']:
+        weechat.prnt("", "{0}: {1}".format(NAME, text))
+
+
 def option_string(value):
     return value
 
@@ -61,11 +66,6 @@ def option_integer(value):
         return int(value)
     except ValueError:
         return 0
-
-
-def debug(text):
-    if config['debug']:
-        weechat.prnt("", "{0}: {1}".format(NAME, text))
 
 
 def config_as_str(value):
@@ -180,7 +180,7 @@ config = {
     ),
 
     'debug': (
-        True,
+        False,
         option_boolean,
         "Print debug info while the app is running"
     ),
@@ -475,23 +475,13 @@ def dispatch_self_talked(buffer_name):
 # inspector doesn't like unused parameters
 # noinspection PyUnusedLocal
 def print_cb(data, buffer_ptr, timestamp, tags, is_displayed, is_highlight, prefix, message):
-    """
-    Called from weechat when something is printed.
-
-    This is only hooked to relevant prints (private and highlight) so it is generally
-    not necessary to check for the former.
-    """
+    """Called from weechat when something is printed."""
     if data != "print":
         debug("Got wrong data in print_cb: {0}".format(data))
         return weechat.WEECHAT_RC_ERROR
 
-    prefix = prefix.decode('utf_8')
+    prefix = prefix.decode('utf-8')
     message = message.decode('utf-8')
-
-    # debug(
-    #     "print_cb: timestamp={0} tags={1} is_displayed={2} is_highlight={3} prefix={4} message={5}"
-    #     .format(timestamp, tags, is_displayed, is_highlight, prefix, message)
-    # )
 
     buffer_name = weechat.buffer_get_string(buffer_ptr, 'full_name')
 
@@ -529,9 +519,6 @@ def print_cb(data, buffer_ptr, timestamp, tags, is_displayed, is_highlight, pref
             "<{0}> {1}".format(prefix, message)
         )
 
-    # else:
-    #     debug("Not dispatching notification for {0} from {1}".format(buffer_name, prefix))
-
     return weechat.WEECHAT_RC_OK
 
 
@@ -568,4 +555,7 @@ if __name__ == '__main__':
         "config"                            # data given to callback function
     )
 
-    weechat.prnt("", "{0}: loaded and running. Debug is {1}".format(NAME, config_as_str(config['debug'])))
+    weechat.prnt(
+        "", "{0}: loaded and running. Debug is {1}"
+        .format(NAME, config_as_str(config['debug']))
+    )
