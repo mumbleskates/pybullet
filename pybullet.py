@@ -475,12 +475,7 @@ def dispatch_self_talked(buffer_name):
 # inspector doesn't like unused parameters
 # noinspection PyUnusedLocal
 def print_cb(data, buffer_ptr, timestamp, tags, is_displayed, is_highlight, prefix, message):
-    """
-    Called from weechat when something is printed.
-
-    This is only hooked to relevant prints (private and highlight) so it is generally
-    not necessary to check for the former.
-    """
+    """Called from weechat when something is printed."""
     if data != "print":
         debug("Got wrong data in print_cb: {0}".format(data))
         return weechat.WEECHAT_RC_ERROR
