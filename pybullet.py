@@ -234,8 +234,8 @@ class Notification(object):
 
     by_buffer = {}
 
-    def __init__(self, buffer):
-        self.buffer = buffer                    # full name of buffer
+    def __init__(self, buffer_name):
+        self.buffer = buffer_name               # full name of buffer
         self.buffer_show = ""                   # display name of buffer
         self.messages = []                      # list of messages displayed
         self.count = 0                          # number of messages
