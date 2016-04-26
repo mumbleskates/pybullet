@@ -485,7 +485,7 @@ def print_cb(data, buffer_ptr, timestamp, tags, is_displayed, is_highlight, pref
         debug("Got wrong data in print_cb: {0}".format(data))
         return weechat.WEECHAT_RC_ERROR
 
-    prefix = prefix.decode('utf_8')
+    prefix = prefix.decode('utf-8')
     message = message.decode('utf-8')
 
     # debug(
