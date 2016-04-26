@@ -48,6 +48,11 @@ session.headers['User-Agent'] = "{0}/{1}".format(NAME, VERSION)
 
 # Configuration #
 
+def debug(text):
+    if config['debug']:
+        weechat.prnt("", "{0}: {1}".format(NAME, text))
+
+
 def option_string(value):
     return value
 
@@ -61,11 +66,6 @@ def option_integer(value):
         return int(value)
     except ValueError:
         return 0
-
-
-def debug(text):
-    if config['debug']:
-        weechat.prnt("", "{0}: {1}".format(NAME, text))
 
 
 def config_as_str(value):
@@ -180,7 +180,7 @@ config = {
     ),
 
     'debug': (
-        True,
+        False,
         option_boolean,
         "Print debug info while the app is running"
     ),
@@ -234,8 +234,8 @@ class Notification(object):
 
     by_buffer = {}
 
-    def __init__(self, buffer):
-        self.buffer = buffer                    # full name of buffer
+    def __init__(self, buffer_name):
+        self.buffer = buffer_name                    # full name of buffer
         self.buffer_show = ""                   # display name of buffer
         self.messages = []                      # list of messages displayed
         self.count = 0                          # number of messages
