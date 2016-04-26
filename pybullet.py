@@ -235,7 +235,7 @@ class Notification(object):
     by_buffer = {}
 
     def __init__(self, buffer_name):
-        self.buffer = buffer_name                    # full name of buffer
+        self.buffer = buffer_name               # full name of buffer
         self.buffer_show = ""                   # display name of buffer
         self.messages = []                      # list of messages displayed
         self.count = 0                          # number of messages
@@ -483,11 +483,6 @@ def print_cb(data, buffer_ptr, timestamp, tags, is_displayed, is_highlight, pref
     prefix = prefix.decode('utf-8')
     message = message.decode('utf-8')
 
-    # debug(
-    #     "print_cb: timestamp={0} tags={1} is_displayed={2} is_highlight={3} prefix={4} message={5}"
-    #     .format(timestamp, tags, is_displayed, is_highlight, prefix, message)
-    # )
-
     buffer_name = weechat.buffer_get_string(buffer_ptr, 'full_name')
 
     # away rules: cancel
@@ -523,9 +518,6 @@ def print_cb(data, buffer_ptr, timestamp, tags, is_displayed, is_highlight, pref
             buffer_name, show_buffer_name,
             "<{0}> {1}".format(prefix, message)
         )
-
-    # else:
-    #     debug("Not dispatching notification for {0} from {1}".format(buffer_name, prefix))
 
     return weechat.WEECHAT_RC_OK
 
@@ -563,4 +555,7 @@ if __name__ == '__main__':
         "config"                            # data given to callback function
     )
 
-    weechat.prnt("", "{0}: loaded and running. Debug is {1}".format(NAME, config_as_str(config['debug'])))
+    weechat.prnt(
+        "", "{0}: loaded and running. Debug is {1}"
+        .format(NAME, config_as_str(config['debug']))
+    )
