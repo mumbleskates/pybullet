@@ -543,7 +543,7 @@ if __name__ == '__main__':
     init_config()
     weechat.hook_print(
         "",                                 # buffer (blank: any buffer)
-        "irc_privmsg",                      # print tags to catch
+        "irc_privmsg",                      # print tags to catch - TODO try hook_signal weechat_pv,weechat_highlight
         "",                                 # message must contain this string
         1,                                  # 1 if strip colors from message
         'print_cb',                         # name of callback function
