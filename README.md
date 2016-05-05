@@ -9,7 +9,7 @@ Notifications are grouped per channel, have increasing delays if ignored, previe
 - requests
 - urllib3
 
-currently, [for better security](https://urllib3.readthedocs.org/en/latest/security.html#pyopenssl) in old Python versions like Ubuntu:
+currently, [for better security](https://urllib3.readthedocs.org/en/latest/security.html#pyopenssl) in old Python versions like Ubuntu 14.04's Python 2.7.6:
 
 - pyopenssl
 - ndg-httpsclient
