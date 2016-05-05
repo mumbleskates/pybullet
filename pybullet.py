@@ -525,7 +525,7 @@ def print_cb(data, buffer_ptr, timestamp, tags, is_displayed, is_highlight, pref
 # inspector doesn't like unused parameters
 # noinspection PyUnusedLocal
 def done_waiting_cb(data, remaining_calls):
-    """Callback for hook_timer; data will be set to a tuple of buffer and expected arrival time"""
+    """Callback for hook_timer; data will be set to the name of the buffer"""
     Notification.get_for_buffer(data).done_waiting()
     return weechat.WEECHAT_RC_OK
 
