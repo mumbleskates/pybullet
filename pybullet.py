@@ -102,6 +102,14 @@ config = {
         "Send notifications for highlights"
     ),
 
+    'highlight_spam_threshold': (
+        10,
+        option_integer,
+        "If a message highlights this many people in channel, assume it is "
+        "spam and do not send a notification. Values less than 2 disable "
+        "this heuristic"
+    ),
+
     'privmsg': (
         True,
         option_boolean,
@@ -460,14 +468,47 @@ class Notification(object):
             debug("Error posting push: status {0}".format(res.status_code))
 
 
-def dispatch_notification(buffer_name, show_buffer_name, message_text):
+def dispatch_notification(buffer_ptr, buffer_name, prefix, message):
     """Send a notification for a buffer"""
-    Notification.get_for_buffer(buffer_name).add_message(show_buffer_name, message_text)
+    if config['short_buffer_name']:
+        show_buffer_name = weechat.buffer_get_string(buffer_ptr, 'short_name')
+    else:
+        show_buffer_name = buffer_name
+
+    debug("Dispatching notification for {0}".format(buffer_name))
+    # send the notification
+    Notification.get_for_buffer(buffer_name).add_message(show_buffer_name, "<{0}> {1}".format(prefix, message))
 
 
 def dispatch_self_talked(buffer_name):
     """Self talked in the buffer, mark and clear status"""
     Notification.get_for_buffer(buffer_name).self_talked()
+
+
+# Heuristics #
+
+def detect_highlight_spam(buffer_ptr, message):
+    """Return True if the message highlights more than the configured threshold
+    of users in the nicklist of the channel"""
+    threshold = config['highlight_spam_threshold']
+    if threshold < 2:
+        return False
+    checked = set()
+
+    # extract words to check from message
+    words = message.split()
+    if not weechat.buffer_get_integer(buffer_ptr, 'nicklist_case_sensitive'):
+        words = map(str.lower, words)
+
+    for word in words:
+        if word in checked:
+            continue
+        checked.add(word)
+        # check if this highlights a user in the channel
+        if weechat.nicklist_search_nick(buffer_ptr, "", word):
+            threshold -= 1
+            if threshold == 0:
+                return True
 
 
 # Core callbacks #
@@ -497,27 +538,14 @@ def print_cb(data, buffer_ptr, timestamp, tags, is_displayed, is_highlight, pref
         debug("Dispatching self talked for {0}".format(buffer_name))
         dispatch_self_talked(buffer_name)
 
-    # highlight or private message
-    elif (
-        (  # highlight
-            config['highlights'] and
-            int(is_highlight)
-        ) or (  # private message
-            config['privmsg'] and
-            weechat.buffer_get_string(buffer_ptr, 'localvar_type') == "private"
-        )
-    ):
-        if config['short_buffer_name']:
-            show_buffer_name = weechat.buffer_get_string(buffer_ptr, 'short_name')
+    # highlight
+    elif config['highlights'] and int(is_highlight):
+        if detect_highlight_spam(buffer_ptr, message):
+            debug("Message for {0} ignored due to detection of highlight spam".format(buffer_name))
         else:
-            show_buffer_name = buffer_name
-
-        debug("Dispatching notification for {0}".format(buffer_name))
-        # send the notification
-        dispatch_notification(
-            buffer_name, show_buffer_name,
-            "<{0}> {1}".format(prefix, message)
-        )
+            dispatch_notification(buffer_ptr, buffer_name, prefix, message)
+    elif config['privmsg'] and weechat.buffer_get_string(buffer_ptr, 'localvar_type') == "private":
+        dispatch_notification(buffer_ptr, buffer_name, prefix, message)
 
     return weechat.WEECHAT_RC_OK
 
