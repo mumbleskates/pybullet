@@ -26,7 +26,7 @@ import weechat
 LICENSE = "MIT"
 
 NAME = "pybullet"
-VERSION = 0.2
+VERSION = 0.3
 AUTHOR = "Kent Ross"
 __doc__ = (
     "{0} {1}: Push smart notifications to pushbullet. Authored by {2}"
@@ -82,6 +82,13 @@ config = {
         "",
         option_string,
         "PushBullet access token"
+    ),
+
+    'target_device': (
+        "",
+        option_string,
+        "PushBullet device iden of a specific device to push notifications "
+        "to. Leave blank to send to all devices"
     ),
 
     'notification_title': (
@@ -274,11 +281,14 @@ class Notification(object):
 
     def pushbullet_json(self):
         """Create the notification's push data for its current state"""
-        return {
+        result = {
             'type': "note",
             'title': config['notification_title'],
             'body': self.notification_text()
         }
+        if config['target_device']:
+            result['device_iden'] = config['target_device']
+        return result
 
     def add_message(self, show_buffer_name, message):
         """Add a message to this notification and update the push"""
