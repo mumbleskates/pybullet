@@ -515,10 +515,11 @@ def detect_highlight_spam(buffer_ptr, message):
             continue
         checked.add(word)
         # check if this highlights a user in the channel
-        if weechat.nicklist_search_nick(buffer_ptr, "", word):
+        if weechat.nicklist_search_nick(buffer_ptr, "", word.encode('utf-8')):
             threshold -= 1
             if threshold == 0:
                 return True
+    return False
 
 
 # Core callbacks #
