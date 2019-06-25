@@ -37,7 +37,8 @@ BULLET_URL = "https://api.pushbullet.com/v2/"
 CONFIG_NAMESPACE = "plugins.var.python.{0}.".format(NAME)
 
 TIMER_GRACE = timedelta(seconds=1)
-# minimum effective value for max_poll_delay: never force polling faster than this
+# minimum effective value for max_poll_delay: never force polling faster than
+# this
 MIN_POLL_DELAY = 20
 
 # https://urllib3.readthedocs.org/en/latest/security.html#pyopenssl
@@ -69,7 +70,7 @@ def option_integer(value):
 
 
 def config_as_str(value):
-    """Convert config defaults to strings for weechat"""
+    """Convert config defaults to strings for weechat."""
     if isinstance(value, bool):
         return "on" if value else "off"
     else:
@@ -141,9 +142,9 @@ config = {
     'delay_after_talk': (
         90,
         option_integer,
-        "For this many seconds after you last talked in a buffer, notifications "
-        "will be delayed. If you talk again before this timer, no notification "
-        "will appear"
+        "For this many seconds after you last talked in a buffer, "
+        "notifications will be delayed. If you talk again before this timer, "
+        "no notification will appear"
     ),
 
     'min_spacing': (
@@ -170,8 +171,9 @@ config = {
     'max_poll_delay': (
         90,
         option_integer,
-        "Be able to notify again at most this many seconds after a notification "
-        "has been dismissed. Not a big deal, leave it high. Minimum {0}"
+        "Be able to notify again at most this many seconds after a "
+        "notification has been dismissed. Not a big deal, leave it high. "
+        "Minimum {0}"
         .format(MIN_POLL_DELAY)
     ),
 
@@ -205,23 +207,32 @@ config_types = {}
 
 
 def init_config():
-    """Perform initial configuration of the application settings"""
+    """Perform initial configuration of the application settings."""
     for option, (default_value, config_type, description) in config.items():
         # set config type
         config_types[option] = config_type
         # set descriptions for options
         weechat.config_set_desc_plugin(
             option,
-            '{0} (default: "{1}")'.format(description, config_as_str(default_value))
+            '{0} (default: "{1}")'.format(
+                description,
+                config_as_str(default_value)
+            )
         )
         # setdefault the script's options from weechat
         if not weechat.config_is_set_plugin(option):
             weechat.config_set_plugin(option, config_as_str(default_value))
             config[option] = default_value
-            debug('Option "{0}" was not set, is now {1}'.format(option, repr(default_value)))
+            debug(
+                'Option "{0}" was not set, is now {1}'
+                .format(option, repr(default_value))
+            )
         else:
             config[option] = config_type(weechat.config_get_plugin(option))
-            debug('Option "{0}" set to {1}'.format(option, repr(config[option])))
+            debug(
+                'Option "{0}" set to {1}'
+                .format(option, repr(config[option]))
+            )
 
 
 def config_cb(data, option, value):
@@ -236,7 +247,10 @@ def config_cb(data, option, value):
     option = option[len(CONFIG_NAMESPACE):]
     if option in config:
         config[option] = config_types[option](value)
-        debug('Option "{0}" set to "{1}" as {2}'.format(option, value, repr(config[option])))
+        debug(
+            'Option "{0}" set to "{1}" as {2}'
+            .format(option, value, repr(config[option]))
+        )
     else:
         debug('Option "{0}" does not seem to be in config'.format(option))
     return weechat.WEECHAT_RC_OK
@@ -245,21 +259,21 @@ def config_cb(data, option, value):
 # Notification functions #
 
 class Notification(object):
-    """Class to track notifications for a particular buffer"""
+    """Class to track notifications for a particular buffer."""
 
     by_buffer = {}
 
     def __init__(self, buffer_name):
-        self.buffer = buffer_name               # full name of buffer
-        self.buffer_show = ""                   # display name of buffer
-        self.messages = []                      # list of messages displayed
-        self.count = 0                          # number of messages
-        self.iden = None                        # iden of current push
-        self.waiting_until = None               # whether we are delaying before sending
-        self.wait_hook = None                   # hook_timer hook id for our current wait
-        self.bonus_delay = 0                    # total extra delay accrued between notifications
-        self.changed = False                    # whether the notification has changed since last posted
-        self.self_last_talked = datetime.min    # last time we talked in the buffer
+        self.buffer = buffer_name  # full name of buffer
+        self.buffer_show = ""      # display name of buffer
+        self.messages = []         # list of messages displayed
+        self.count = 0             # number of messages
+        self.iden = None           # iden of current push
+        self.waiting_until = None  # whether we are delaying before sending
+        self.wait_hook = None      # hook_timer hook id for our current wait
+        self.bonus_delay = 0  # total extra delay accrued between notifications
+        self.changed = False  # whether the notification changed since last post
+        self.self_last_talked = datetime.min  # last time we talked in the buff
 
     @staticmethod
     def get_for_buffer(buffer_name):
@@ -273,14 +287,18 @@ class Notification(object):
         return "\n".join(chain(
             ["{1}[{0}]".format(
                 self.buffer_show,
-                "{0} messages from ".format(self.count) if self.count > 1 else ""
+                (
+                    "{0} messages from ".format(self.count)
+                    if self.count > 1 else
+                    ""
+                )
             )],
             self.messages,
             ["..."] if self.count > len(self.messages) else ()
         ))
 
     def pushbullet_json(self):
-        """Create the notification's push data for its current state"""
+        """Create the notification's push data for its current state."""
         result = {
             'type': "note",
             'title': config['notification_title'],
@@ -291,7 +309,7 @@ class Notification(object):
         return result
 
     def add_message(self, show_buffer_name, message):
-        """Add a message to this notification and update the push"""
+        """Add a message to this notification and update the push."""
         self.buffer_show = show_buffer_name
 
         if not config['api_secret']:
@@ -300,7 +318,10 @@ class Notification(object):
 
         self.check_dismissal()
 
-        if (datetime.utcnow() - self.self_last_talked).total_seconds() < config['ignore_after_talk']:
+        if (
+            (datetime.utcnow() - self.self_last_talked).total_seconds()
+            < config['ignore_after_talk']
+        ):
             debug("Self talked in channel too recently, ignoring")
             return
 
@@ -320,16 +341,22 @@ class Notification(object):
             self.send_notification()
 
     def self_talked(self):
-        """We talked in the buffer; clear notification, reset status, and set last talked time"""
+        """
+        We talked in the buffer; clear notification, reset status, and set last
+        talked time.
+        """
         self.check_dismissal()
         self.delete()  # continue even with error
         self.reset()
         self.self_last_talked = datetime.utcnow()
-        # if we are already waiting, bump up the timer until our delay_after_talk
+        # if we are already waiting, bump the timer until our delay_after_talk
         self.delay(config['delay_after_talk'])
 
     def delay(self, seconds):
-        """Ensure that there is a running timer hook for the time <seconds> from now"""
+        """
+        Ensure that there is a running timer hook for the time <seconds> from
+        now.
+        """
         after_delay = datetime.utcnow() + timedelta(seconds=seconds)
         if self.waiting_until:
             self.waiting_until = max(self.waiting_until, after_delay)
@@ -340,8 +367,8 @@ class Notification(object):
     def go_wait(self):
         """Set callback hook to wait until our destination time"""
         seconds = (self.waiting_until - datetime.utcnow()).total_seconds()
-        # do not wait more than max_poll_delay seconds, and max_poll_delay cannot be
-        # less than MIN_POLL_DELAY
+        # do not wait more than max_poll_delay seconds, and max_poll_delay
+        # cannot be less than MIN_POLL_DELAY
         if config['max_poll_delay'] > MIN_POLL_DELAY:
             seconds = min(seconds, config['max_poll_delay'])
         debug("Waiting {0} seconds for {1}".format(seconds, self.buffer))
@@ -358,9 +385,15 @@ class Notification(object):
             self.send_notification()
 
     def done_waiting(self):
-        """Timer has returned at approximately the given time. Only sent from callbacks"""
+        """
+        Timer has returned at approximately the given time. Only sent from
+        callbacks.
+        """
         self.wait_hook = None  # done with this
-        if self.waiting_until and datetime.utcnow() > self.waiting_until + TIMER_GRACE:
+        if (
+            self.waiting_until
+            and datetime.utcnow() > self.waiting_until + TIMER_GRACE
+        ):
             # we haven't waited long enough, perhaps the timer was increased
             # or we are capped at max_poll_delay
             self.check_dismissal()
@@ -390,7 +423,9 @@ class Notification(object):
                     self.bonus_delay += config['increase_spacing']
 
     def reset(self):
-        """Reset the state of this notification as it's been seen or dismissed"""
+        """
+        Reset the state of this notification as it's been seen or dismissed.
+        """
         # cancel any current wait
         if self.wait_hook is not None:
             debug("Unhooking wait for {0}".format(self.buffer))
@@ -404,7 +439,7 @@ class Notification(object):
         self.changed = False
 
     def check_dismissal(self):
-        """Check if this notification's push was dismissed and reset if so"""
+        """Check if this notification's push was dismissed and reset if so."""
         if not self.iden:
             return
         try:
@@ -413,7 +448,10 @@ class Notification(object):
                 headers={'Access-Token': config['api_secret']}
             )
         except RequestException as ex:
-            debug("Bad error while getting pushes/{0}: {1}".format(self.iden, ex))
+            debug(
+                "Bad error while getting pushes/{0}: {1}"
+                .format(self.iden, ex)
+            )
             return
 
         # reset and possibly delete if it's marked as dismissed
@@ -428,10 +466,16 @@ class Notification(object):
             except (JSONDecodeError, KeyError) as ex:
                 debug("Error while reading push info: {0}".format(ex))
         else:
-            debug("Error while getting push info: status {0}".format(res.status_code))
+            debug(
+                "Error while getting push info: status {0}"
+                .format(res.status_code)
+            )
 
     def delete(self):
-        """Delete this notification's current push, returning False if a bad error occurred"""
+        """
+        Delete this notification's current push, returning False if a bad error
+        occurred.
+        """
         if self.iden:
             try:
                 res = session.delete(
@@ -439,7 +483,10 @@ class Notification(object):
                     headers={'Access-Token': config['api_secret']}
                 )
             except RequestException as ex:
-                debug("Bad error while deleting pushes/{0}: {1}".format(self.iden, ex))
+                debug(
+                    "Bad error while deleting pushes/{0}: {1}"
+                    .format(self.iden, ex)
+                )
                 return False
             if res.status_code not in (200, 404):
                 debug(
@@ -452,7 +499,10 @@ class Notification(object):
 
     def repost(self):
         """Delete the old push and post a new one"""
-        debug("Reposting for {0} from iden {1}".format(self.buffer_show, self.iden))
+        debug(
+            "Reposting for {0} from iden {1}"
+            .format(self.buffer_show, self.iden)
+        )
         if not self.delete():
             return  # don't continue if we got a request error
         # Now post the new push
@@ -487,7 +537,10 @@ def dispatch_notification(buffer_ptr, buffer_name, prefix, message):
 
     debug("Dispatching notification for {0}".format(buffer_name))
     # send the notification
-    Notification.get_for_buffer(buffer_name).add_message(show_buffer_name, "<{0}> {1}".format(prefix, message))
+    Notification.get_for_buffer(buffer_name).add_message(
+        show_buffer_name,
+        "<{0}> {1}".format(prefix, message)
+    )
 
 
 def dispatch_self_talked(buffer_name):
@@ -498,8 +551,10 @@ def dispatch_self_talked(buffer_name):
 # Heuristics #
 
 def detect_highlight_spam(buffer_ptr, message):
-    """Return True if the message highlights more than the configured threshold
-    of users in the nicklist of the channel"""
+    """
+    Return True if the message highlights more than the configured threshold
+    of users in the nicklist of the channel.
+    """
     threshold = config['highlight_spam_threshold']
     if threshold < 2:
         return False
@@ -526,7 +581,16 @@ def detect_highlight_spam(buffer_ptr, message):
 
 # inspector doesn't like unused parameters
 # noinspection PyUnusedLocal
-def print_cb(data, buffer_ptr, timestamp, tags, is_displayed, is_highlight, prefix, message):
+def print_cb(
+    data,
+    buffer_ptr,
+    timestamp,
+    tags,
+    is_displayed,
+    is_highlight,
+    prefix,
+    message
+):
     """Called from weechat when something is printed."""
     if data != "print":
         debug("Got wrong data in print_cb: {0}".format(data))
@@ -538,24 +602,38 @@ def print_cb(data, buffer_ptr, timestamp, tags, is_displayed, is_highlight, pref
     buffer_name = weechat.buffer_get_string(buffer_ptr, 'full_name')
 
     # away rules: cancel
-    if config['only_when_away'] and not weechat.buffer_get_string(buffer_ptr, 'localvar_away'):
+    if (
+        config['only_when_away']
+        and not weechat.buffer_get_string(buffer_ptr, 'localvar_away')
+    ):
         debug("Message for {0} ignored due to away status".format(buffer_name))
 
     # sent by me: clear and delay more messages
     # messages sent by you will have the tag "nick_?" with your localvar nick.
     # Prefix is unreliable as it may include mode indicator symbols.
     tags = tags.decode('utf-8').split(",")
-    if "nick_{0}".format(weechat.buffer_get_string(buffer_ptr, 'localvar_nick').decode('utf-8')) in tags:
+    if (
+        "nick_{0}".format(
+            weechat.buffer_get_string(buffer_ptr, 'localvar_nick')
+            .decode('utf-8')
+        ) in tags
+    ):
         debug("Dispatching self talked for {0}".format(buffer_name))
         dispatch_self_talked(buffer_name)
 
     # highlight
     elif config['highlights'] and int(is_highlight):
         if detect_highlight_spam(buffer_ptr, message):
-            debug("Message for {0} ignored due to detection of highlight spam".format(buffer_name))
+            debug(
+                "Message for {0} ignored due to detection of highlight spam"
+                .format(buffer_name)
+            )
         else:
             dispatch_notification(buffer_ptr, buffer_name, prefix, message)
-    elif config['privmsg'] and weechat.buffer_get_string(buffer_ptr, 'localvar_type') == "private":
+    elif (
+        config['privmsg']
+        and weechat.buffer_get_string(buffer_ptr, 'localvar_type') == "private"
+    ):
         dispatch_notification(buffer_ptr, buffer_name, prefix, message)
 
     return weechat.WEECHAT_RC_OK
