@@ -570,7 +570,7 @@ def detect_highlight_spam(buffer_ptr, message):
             continue
         checked.add(word)
         # check if this highlights a user in the channel
-        if weechat.nicklist_search_nick(buffer_ptr, "", word.encode('utf-8')):
+        if weechat.nicklist_search_nick(buffer_ptr, "", word):
             threshold -= 1
             if threshold == 0:
                 return True
@@ -596,11 +596,6 @@ def print_cb(
         debug("Got wrong data in print_cb: {0}".format(data))
         return weechat.WEECHAT_RC_ERROR
 
-    if not isinstance(prefix, str):
-        prefix = prefix.decode('utf-8')
-    if not isinstance(message, str):
-        message = message.decode('utf-8')
-
     buffer_name = weechat.buffer_get_string(buffer_ptr, 'full_name')
 
     # away rules: cancel
@@ -613,12 +608,8 @@ def print_cb(
     # sent by me: clear and delay more messages
     # messages sent by you will have the tag "nick_?" with your localvar nick.
     # Prefix is unreliable as it may include mode indicator symbols.
-    if not isinstance(tags, str):
-        tags = tags.decode('utf-8')
     tags = tags.split(",")
     my_nick = weechat.buffer_get_string(buffer_ptr, 'localvar_nick')
-    if not isinstance(my_nick, str):
-        my_nick = my_nick.decode('utf-8')
     if ("nick_{0}".format(my_nick) in tags):
         debug("Dispatching self talked for {0}".format(buffer_name))
         dispatch_self_talked(buffer_name)
