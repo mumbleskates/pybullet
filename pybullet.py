@@ -1,32 +1,16 @@
 # -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-
-try:
-    # noinspection PyUnresolvedReferences,PyShadowingBuiltins
-    str = unicode
-except NameError:
-    # noinspection PyShadowingBuiltins,PyUnboundLocalVariable
-    str = str
-
-import json
-try:
-    from json import JSONDecodeError
-except ImportError:
-    JSONDecodeError = ValueError
-
 from datetime import datetime, timedelta
 from itertools import chain
+import json
+from json import JSONDecodeError
 
-import urllib3.contrib.pyopenssl
-import requests
-from requests.exceptions import RequestException
 import weechat
 
 
 LICENSE = "MIT"
 
 NAME = "pybullet"
-VERSION = 0.3
+VERSION = 0.4
 AUTHOR = "Kent Ross"
 __doc__ = (
     "{0} {1}: Push smart notifications to pushbullet. Authored by {2}"
@@ -40,11 +24,48 @@ TIMER_GRACE = timedelta(seconds=1)
 # minimum effective value for max_poll_delay: never force polling faster than
 # this
 MIN_POLL_DELAY = 20
+HTTP_TIMEOUT = 30 * 1000  # milliseconds
 
-# https://urllib3.readthedocs.org/en/latest/security.html#pyopenssl
-urllib3.contrib.pyopenssl.inject_into_urllib3()
-session = requests.session()
-session.headers['User-Agent'] = "{0}/{1}".format(NAME, VERSION)
+
+class RequestException(Exception):
+    pass
+
+
+def http_request(
+    method, url,
+    headers=None,
+    data=None,
+    callback=None,
+    cb_data=None
+):
+    options = {
+        'customrequest': method,
+        'header': 1,
+    }
+    if headers is not None:
+        options['httpheader'] = [
+            "{0}: {1}".format(k, v)
+            for k, v in headers.items()
+        ]
+    if data is not None:
+        data_bytes = data.encode('utf-8')
+        options['copypostfields'] = data_bytes
+        options['postfieldsize'] = len(data_bytes)
+
+    weechat.hook_process_hashtable(
+        "url:{0}".format(url),
+        options,
+        HTTP_TIMEOUT,
+        'http_cb_receiver',
+        (callback, cb_data)
+    )
+
+
+def http_cb_receiver(data, _command, return_code, out, err):
+    callback, cb_data = data
+    if callback is not None:
+        callback(cb_data, out, err)
+    return weechat.WEECHAT_RC_OK
 
 
 # Configuration #
@@ -443,7 +464,8 @@ class Notification(object):
         if not self.iden:
             return
         try:
-            res = session.get(
+            http_request(
+                'GET',
                 BULLET_URL + "pushes/{0}".format(self.iden),
                 headers={'Access-Token': config['api_secret']}
             )
@@ -478,7 +500,8 @@ class Notification(object):
         """
         if self.iden:
             try:
-                res = session.delete(
+                http_request(
+                    'DELETE',
                     BULLET_URL + "pushes/{0}".format(self.iden),
                     headers={'Access-Token': config['api_secret']}
                 )
@@ -507,7 +530,8 @@ class Notification(object):
             return  # don't continue if we got a request error
         # Now post the new push
         try:
-            res = session.post(
+            http_request(
+                'POST',
                 BULLET_URL + "pushes",
                 headers={
                     'Access-Token': config['api_secret'],
@@ -610,7 +634,7 @@ def print_cb(
     # Prefix is unreliable as it may include mode indicator symbols.
     tags = tags.split(",")
     my_nick = weechat.buffer_get_string(buffer_ptr, 'localvar_nick')
-    if ("nick_{0}".format(my_nick) in tags):
+    if "nick_{0}".format(my_nick) in tags:
         debug("Dispatching self talked for {0}".format(buffer_name))
         dispatch_self_talked(buffer_name)
 
