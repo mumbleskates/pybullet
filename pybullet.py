@@ -577,6 +577,9 @@ class Notification(object):
                 callback=self.delete_cb,
                 cb_data=(next_action, continue_if_error),
             )
+        else:
+            if next_action is not None:
+                next_action()
 
     def delete_cb(self, cb_data, http_response, error):
         next_action, continue_if_error = cb_data
