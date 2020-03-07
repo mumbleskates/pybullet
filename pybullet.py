@@ -618,7 +618,10 @@ class Notification(object):
             cb_data=None,
         )
 
-    def post_cb(self, cb_data, http_response, stderr):
+    def post_cb(self, cb_data, http_response, error):
+        if error:
+            debug("Bad error while posting push: {0}".format(error))
+            return
         if http_response.status_code == 200:
             try:
                 self.iden = http_response.json()['iden']
