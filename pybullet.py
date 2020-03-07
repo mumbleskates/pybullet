@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from collections import namedtuple
 from datetime import datetime, timedelta
-from itertools import chain
+from itertools import chain, count
 import json
 from json import JSONDecodeError
 
@@ -46,7 +46,7 @@ HttpResponse = namedtuple(
 
 # Callback data by
 http_callback_stash = {}
-http_callback_stash_next_id = 0
+http_callback_stash_id_provider = map(str, count())
 
 
 def http_request(
@@ -56,7 +56,6 @@ def http_request(
     callback=None,
     cb_data=None
 ):
-    global http_callback_stash_next_id
     options = {
         'customrequest': method,
         'header': 1,
@@ -82,11 +81,10 @@ def http_request(
         options['postfieldsize'] = len(data_bytes)
 
     debug("sending http {0} request to {1}".format(method, repr(url)))
-    stash_id = str(http_callback_stash_next_id)
-    http_callback_stash_next_id += 1
+    stash_id = next(http_callback_stash_id_provider)
     http_callback_stash[stash_id] = (url, callback, cb_data)
     debug(
-        "http callback stash now has {0} in-flight requests"
+        "http callback stash now has {0} in-flight request(s)"
         .format(len(http_callback_stash))
     )
     weechat.hook_process_hashtable(
@@ -561,7 +559,7 @@ class Notification(object):
 
         if http_response.status_code == 200:
             try:
-                if json.loads(http_response.body)['dismissed']:
+                if json.loads(http_response.body.decode('utf-8'))['dismissed']:
                     # reset self
                     debug("Push for {0} was dismissed".format(self.buffer_show))
                     if config['delete_dismissed']:
