@@ -32,6 +32,18 @@ class RequestException(Exception):
     pass
 
 
+# HTTP response.
+#   http_version: str
+#   status_code: int
+#   headers: dict[str, str]
+#   body: bytes
+#   stderr: bytes
+HttpResponse = namedtuple(
+    'HttpResponse',
+    'http_version status_code headers body stderr'
+)
+
+
 def http_request(
     method, url,
     headers=None,
@@ -63,29 +75,19 @@ def http_request(
         options['copypostfields'] = data_bytes
         options['postfieldsize'] = len(data_bytes)
 
+    debug("sending http {0} request to {1}".format(method, repr(url)))
     weechat.hook_process_hashtable(
         "url:{0}".format(url),
         options,
         HTTP_TIMEOUT,
         'http_cb_receiver',
-        (callback, cb_data)
+        (url, callback, cb_data)
     )
 
 
-# HTTP response.
-#   http_version: str
-#   status_code: int
-#   headers: dict[str, str]
-#   body: bytes
-#   stderr: bytes
-HttpResponse = namedtuple(
-    'HttpResponse',
-    'http_version status_code headers body stderr'
-)
-
-
 def http_cb_receiver(data, command, return_code, stdout, stderr):
-    callback, cb_data = data
+    url, callback, cb_data = data
+    debug("got http response back from {0}".format(repr(url)))
     if return_code == weechat.WEECHAT_HOOK_PROCESS_ERROR:
         callback(
             cb_data,
