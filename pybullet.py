@@ -62,10 +62,10 @@ def http_request(
         'header': 1,
     }
     if headers is not None:
-        options['httpheader'] = [
+        options['httpheader'] = "\n".join(
             "{0}: {1}".format(k, v)
             for k, v in headers.items()
-        ]
+        )
     if data is not None:
         if isinstance(data, str):
             data_bytes = data.encode('utf-8')
@@ -790,6 +790,6 @@ if __name__ == '__main__':
     )
 
     weechat.prnt(
-        "", "{0}: loaded and running on {1}. Debug is {2}"
+        "", "{0}: loaded and running on python {1}. Debug is {2}"
         .format(NAME, repr(sys.version), config_as_str(config['debug']))
     )
