@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from collections import namedtuple
 from datetime import datetime, timedelta
 from itertools import chain
 import json
@@ -48,7 +49,17 @@ def http_request(
             for k, v in headers.items()
         ]
     if data is not None:
-        data_bytes = data.encode('utf-8')
+        if isinstance(data, str):
+            data_bytes = data.encode('utf-8')
+        elif isinstance(data, bytes):
+            data_bytes = data
+        elif isinstance(data, (list, dict)):
+            data_bytes = json.dumps(data).encode('utf-8')
+        else:
+            raise ValueError(
+                "Bad type {0} passed to http_request data param"
+                .format(type(data))
+            )
         options['copypostfields'] = data_bytes
         options['postfieldsize'] = len(data_bytes)
 
@@ -61,10 +72,58 @@ def http_request(
     )
 
 
-def http_cb_receiver(data, _command, return_code, out, err):
+# HTTP response.
+#   http_version: str
+#   status_code: int
+#   headers: dict[str, str]
+#   body: bytes
+#   stderr: bytes
+HttpResponse = namedtuple(
+    'HttpResponse',
+    'http_version status_code headers body stderr'
+)
+
+
+def http_cb_receiver(data, command, return_code, stdout, stderr):
     callback, cb_data = data
-    if callback is not None:
-        callback(cb_data, out, err)
+    if return_code == weechat.WEECHAT_HOOK_PROCESS_ERROR:
+        callback(
+            cb_data,
+            None,
+            RequestException("Error with command {0}".format(repr(command)))
+        )
+        return weechat.WEECHAT_RC_OK
+    try:
+        # We receive http responses with the response header intact so we
+        # can parse out the status etc.
+        header_bytes, _, body = stdout.partition(b"\r\n\r\n")
+        [status_line, *header_lines] = (
+            header_bytes
+            .decode('ascii')
+            .split('\r\n')
+        )
+        http_version, _, status_str = status_line.partition(" ")
+        status_code = int(status_str)
+        header_dict = {
+            field: value.strip()
+            for field, _, value in (
+                line.partition(":") for line in header_lines
+            )
+        }
+        response = HttpResponse(
+            http_version=http_version,
+            status_code=status_code,
+            headers=header_dict,
+            body=body,
+            stderr=stderr,
+        )
+        callback(cb_data, response, error=None)
+    except (UnicodeDecodeError, ValueError) as ex:
+        callback(
+            cb_data,
+            None,
+            error=RequestException("bad HTTP header received: {0}".format(ex)),
+         )
     return weechat.WEECHAT_RC_OK
 
 
@@ -367,7 +426,9 @@ class Notification(object):
         talked time.
         """
         self.check_dismissal()
-        self.delete()  # continue even with error
+        self.delete(next_action=self.self_talked_cb, continue_if_error=True)
+
+    def self_talked_cb(self):
         self.reset()
         self.self_last_talked = datetime.utcnow()
         # if we are already waiting, bump the timer until our delay_after_talk
@@ -463,62 +524,78 @@ class Notification(object):
         """Check if this notification's push was dismissed and reset if so."""
         if not self.iden:
             return
-        try:
-            http_request(
-                'GET',
-                BULLET_URL + "pushes/{0}".format(self.iden),
-                headers={'Access-Token': config['api_secret']}
-            )
-        except RequestException as ex:
+        http_request(
+            method='GET',
+            url=BULLET_URL + "pushes/{0}".format(self.iden),
+            headers={'Access-Token': config['api_secret']},
+            callback=self.check_dismissal_cb,
+            cb_data=None,
+        )
+
+    def check_dismissal_cb(self, cb_data, http_response, error):
+        if error:
             debug(
                 "Bad error while getting pushes/{0}: {1}"
-                .format(self.iden, ex)
+                .format(self.iden, error)
             )
             return
 
         # reset and possibly delete if it's marked as dismissed
-        if res.status_code == 200:
+        if not self.iden:
+            return  # nothing to do if we are not tracking a notification
+
+        if http_response.status_code == 200:
             try:
-                if res.json()['dismissed']:
+                if json.loads(http_response.body)['dismissed']:
                     # reset self
                     debug("Push for {0} was dismissed".format(self.buffer_show))
                     if config['delete_dismissed']:
-                        self.delete()  # continue even with error
-                    self.reset()
+                        self.delete(
+                            next_action=self.reset,
+                            continue_if_error=True,
+                        )
             except (JSONDecodeError, KeyError) as ex:
                 debug("Error while reading push info: {0}".format(ex))
         else:
             debug(
                 "Error while getting push info: status {0}"
-                .format(res.status_code)
+                .format(http_response.status_code)
             )
 
-    def delete(self):
+    def delete(self, next_action=None, continue_if_error=False):
         """
         Delete this notification's current push, returning False if a bad error
         occurred.
         """
         if self.iden:
-            try:
-                http_request(
-                    'DELETE',
-                    BULLET_URL + "pushes/{0}".format(self.iden),
-                    headers={'Access-Token': config['api_secret']}
-                )
-            except RequestException as ex:
-                debug(
-                    "Bad error while deleting pushes/{0}: {1}"
-                    .format(self.iden, ex)
-                )
-                return False
-            if res.status_code not in (200, 404):
+            http_request(
+                method='DELETE',
+                url=BULLET_URL + "pushes/{0}".format(self.iden),
+                headers={'Access-Token': config['api_secret']},
+                callback=self.delete_cb,
+                cb_data=(next_action, continue_if_error),
+            )
+
+    def delete_cb(self, cb_data, http_response, error):
+        next_action, continue_if_error = cb_data
+        if error:
+            debug(
+                "Bad error while deleting pushes/{0}: {1}"
+                .format(self.iden, error)
+            )
+            if next_action is not None and continue_if_error:
+                next_action()
+            return
+        if self.iden:
+            if http_response.status_code not in (200, 404):
                 debug(
                     "Failed to delete pushes/{0} with status code {1}"
-                    .format(self.iden, res.status_code)
+                    .format(self.iden, http_response.status_code)
                 )
             else:
                 self.iden = None
-        return True
+        if next_action is not None:
+            next_action()
 
     def repost(self):
         """Delete the old push and post a new one"""
@@ -526,30 +603,33 @@ class Notification(object):
             "Reposting for {0} from iden {1}"
             .format(self.buffer_show, self.iden)
         )
-        if not self.delete():
-            return  # don't continue if we got a request error
-        # Now post the new push
-        try:
-            http_request(
-                'POST',
-                BULLET_URL + "pushes",
-                headers={
-                    'Access-Token': config['api_secret'],
-                    'Content-Type': "application/json",
-                },
-                data=json.dumps(self.pushbullet_json())
-            )
-        except RequestException as ex:
-            debug("Bad error while posting push: {0}".format(ex))
-            return
-        if res.status_code == 200:
+        self.delete(next_action=self.post, continue_if_error=False)
+
+    def post(self):
+        http_request(
+            method='POST',
+            url=BULLET_URL + "pushes",
+            headers={
+                'Access-Token': config['api_secret'],
+                'Content-Type': "application/json",
+            },
+            data=self.pushbullet_json(),
+            callback=self.post_cb,
+            cb_data=None,
+        )
+
+    def post_cb(self, cb_data, http_response, stderr):
+        if http_response.status_code == 200:
             try:
-                self.iden = res.json()['iden']
+                self.iden = http_response.json()['iden']
                 debug("Got new iden {0}".format(self.iden))
             except (JSONDecodeError, KeyError) as ex:
                 debug("Error reading push creation response: {0}".format(ex))
         else:
-            debug("Error posting push: status {0}".format(res.status_code))
+            debug(
+                "Error posting push: status {0}"
+                .format(http_response.status_code)
+            )
 
 
 def dispatch_notification(buffer_ptr, buffer_name, prefix, message):
