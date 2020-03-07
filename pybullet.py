@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from itertools import chain, count
 import json
 from json import JSONDecodeError
+import sys
 
 import weechat
 
@@ -789,6 +790,6 @@ if __name__ == '__main__':
     )
 
     weechat.prnt(
-        "", "{0}: loaded and running. Debug is {1}"
-        .format(NAME, config_as_str(config['debug']))
+        "", "{0}: loaded and running on {1}. Debug is {2}"
+        .format(NAME, repr(sys.version), config_as_str(config['debug']))
     )
