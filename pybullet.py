@@ -44,6 +44,11 @@ HttpResponse = namedtuple(
 )
 
 
+# Callback data by
+http_callback_stash = {}
+http_callback_stash_next_id = 0
+
+
 def http_request(
     method, url,
     headers=None,
@@ -51,6 +56,7 @@ def http_request(
     callback=None,
     cb_data=None
 ):
+    global http_callback_stash_next_id
     options = {
         'customrequest': method,
         'header': 1,
@@ -76,17 +82,24 @@ def http_request(
         options['postfieldsize'] = len(data_bytes)
 
     debug("sending http {0} request to {1}".format(method, repr(url)))
+    stash_id = str(http_callback_stash_next_id)
+    http_callback_stash_next_id += 1
+    http_callback_stash[stash_id] = (url, callback, cb_data)
+    debug(
+        "http callback stash now has {0} in-flight requests"
+        .format(len(http_callback_stash))
+    )
     weechat.hook_process_hashtable(
         "url:{0}".format(url),
         options,
         HTTP_TIMEOUT,
         'http_cb_receiver',
-        (url, callback, cb_data)
+        stash_id,
     )
 
 
 def http_cb_receiver(data, command, return_code, stdout, stderr):
-    url, callback, cb_data = data
+    url, callback, cb_data = http_callback_stash.pop(data)
     debug("got http response back from {0}".format(repr(url)))
     if return_code == weechat.WEECHAT_HOOK_PROCESS_ERROR:
         callback(
