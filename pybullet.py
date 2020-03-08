@@ -176,6 +176,14 @@ def secret_renderer(value):
     return "[redacted]" if value else repr("")
 
 
+def boolean_renderer(value):
+    return "on" if value else "off"
+
+
+def default_renderer(value):
+    return repr(value)
+
+
 # options (default, type, renderer, description)
 config = {
     'api_secret': (
@@ -188,7 +196,7 @@ config = {
     'target_device': (
         "",
         option_string,
-        repr,
+        default_renderer,
         "PushBullet device iden of a specific device to push notifications "
         "to. Leave blank to send to all devices"
     ),
@@ -196,28 +204,28 @@ config = {
     'notification_title': (
         "weechat",
         option_string,
-        repr,
+        default_renderer,
         "Title for notifications sent"
     ),
 
     'only_when_away': (
         False,
         option_boolean,
-        repr,
+        boolean_renderer,
         "Only send notifications when away"
     ),
 
     'highlights': (
         True,
         option_boolean,
-        repr,
+        boolean_renderer,
         "Send notifications for highlights"
     ),
 
     'highlight_spam_threshold': (
         10,
         option_integer,
-        repr,
+        default_renderer,
         "If a message highlights this many people in channel, assume it is "
         "spam and do not send a notification. Values less than 2 disable "
         "this heuristic"
@@ -226,14 +234,14 @@ config = {
     'privmsg': (
         True,
         option_boolean,
-        repr,
+        boolean_renderer,
         "Send notifications for private messages"
     ),
 
     'displayed_messages': (
         3,
         option_integer,
-        repr,
+        default_renderer,
         "Number of messages for which to display the full text. Set to zero "
         "to always show all messages (not necessarily a good idea) or negative "
         "to never show message text"
@@ -242,7 +250,7 @@ config = {
     'ignore_after_talk': (
         10,
         option_integer,
-        repr,
+        default_renderer,
         "For this many seconds after you have talked in a buffer, additional "
         "highlights and PMs will be ignored, assuming you saw them"
     ),
@@ -250,7 +258,7 @@ config = {
     'delay_after_talk': (
         90,
         option_integer,
-        repr,
+        default_renderer,
         "For this many seconds after you last talked in a buffer, "
         "notifications will be delayed. If you talk again before this timer, "
         "no notification will appear"
@@ -259,7 +267,7 @@ config = {
     'min_spacing': (
         13,
         option_integer,
-        repr,
+        default_renderer,
         "Notifications for a single buffer will never appear closer together "
         "than this many seconds"
     ),
@@ -267,7 +275,7 @@ config = {
     'long_spacing': (
         200,
         option_integer,
-        repr,
+        default_renderer,
         "After many unseen messages in a channel, wait at least this long "
         "before notifying again - see many_messages"
     ),
@@ -275,7 +283,7 @@ config = {
     'increase_spacing': (
         70,
         option_integer,
-        repr,
+        default_renderer,
         "Each time a notification is received on a very busy channel the next "
         "notification will be delayed this many more seconds."
     ),
@@ -283,7 +291,7 @@ config = {
     'max_poll_delay': (
         90,
         option_integer,
-        repr,
+        default_renderer,
         "Be able to notify again at most this many seconds after a "
         "notification has been dismissed. Not a big deal, leave it high. "
         "Minimum {0}"
@@ -293,7 +301,7 @@ config = {
     'many_messages': (
         8,
         option_integer,
-        repr,
+        default_renderer,
         "After this many messages in a channel, use the long spacing between "
         "notifications - seen long_spacing"
     ),
@@ -301,21 +309,21 @@ config = {
     'short_buffer_name': (
         False,
         option_boolean,
-        repr,
+        boolean_renderer,
         "Use the short name of the buffer rather than the long one"
     ),
 
     'delete_dismissed': (
         False,
         option_boolean,
-        repr,
+        boolean_renderer,
         "Delete dismissed notifications"
     ),
 
     'debug': (
         False,
         option_boolean,
-        repr,
+        boolean_renderer,
         "Print debug info while the app is running"
     ),
 }
