@@ -667,7 +667,9 @@ class Notification(object):
             return
         if http_response.status_code == 200:
             try:
-                self.iden = json.loads(http_response.decode('utf-8'))['iden']
+                self.iden = json.loads(
+                    http_response.body.decode('utf-8')
+                )['iden']
                 debug("Got new iden {0}".format(self.iden))
             except (JSONDecodeError, UnicodeDecodeError, KeyError) as ex:
                 debug("Error reading push creation response: {0}".format(ex))
