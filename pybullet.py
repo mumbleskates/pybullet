@@ -38,7 +38,7 @@ class RequestException(Exception):
 #   status_code: int
 #   headers: dict[str, str]
 #   body: bytes
-#   stderr: bytes
+#   stderr: bytes or str
 HttpResponse = namedtuple(
     'HttpResponse',
     'http_version status_code headers body stderr'
@@ -109,12 +109,12 @@ def http_cb_receiver(data, command, return_code, stdout, stderr):
     try:
         # We receive http responses with the response header intact so we
         # can parse out the status etc.
+        if isinstance(stdout, str):
+            # weechat returns str unless the content is not valid utf-8.
+            stdout = stdout.encode('utf-8')
         header_bytes, _, body = stdout.partition(b"\r\n\r\n")
-        [status_line, *header_lines] = (
-            header_bytes
-            .decode('ascii')
-            .split('\r\n')
-        )
+        header = header_bytes.decode('ascii')
+        [status_line, *header_lines] = header.split("\r\n")
         http_version, _, status_str = status_line.partition(" ")
         status_code = int(status_str)
         header_dict = {
