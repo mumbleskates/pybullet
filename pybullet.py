@@ -235,8 +235,8 @@ config = {
         option_integer,
         repr,
         "Number of messages for which to display the full text. Set to zero "
-        "to always show all messages (not a good idea) or negative to never "
-        "show message text"
+        "to always show all messages (not necessarily a good idea) or negative "
+        "to never show message text"
     ),
 
     'ignore_after_talk': (
@@ -389,8 +389,8 @@ class Notifier:
         self.buffer_show = ""       # display name of buffer
         self.messages = []          # list of messages displayed
         self.message_count = 0              # number of messages
-        self.unseen = []            # list of unseen messages (w/ no notif sent)
-        self.unseen_count = 0       # number of unseen messages
+        self.unsent = []            # list of unsent messages (w/ no notif sent)
+        self.unsent_count = 0       # number of unsent messages
         self.current_notif = None   # current push notification
         self.waiting_until = None   # whether we are delaying before sending
         self.wait_hook = None       # hook_timer hook id for our current wait
@@ -447,11 +447,11 @@ class Notifier:
 
         # remember message if it might be displayed
         to_display = config['displayed_messages']
-        if to_display == 0 or len(self.unseen) < to_display:
-            self.unseen.append(message)
+        if to_display == 0 or len(self.unsent) < to_display:
+            self.unsent.append(message)
 
         # update count of messages
-        self.unseen_count += 1
+        self.unsent_count += 1
 
         if self.waiting_until:
             if self.current_notif:
@@ -476,8 +476,8 @@ class Notifier:
             self.wait_hook = None
         self.waiting_until = None
         self.bonus_delay = 0
-        del self.unseen[:]
-        self.unseen_count = 0
+        del self.unsent[:]
+        self.unsent_count = 0
         self.self_last_talked = datetime.utcnow()
         # if we are already waiting, bump the timer until our delay_after_talk
         self.delay(config['delay_after_talk'])
@@ -537,15 +537,17 @@ class Notifier:
 
     def send_notification(self):
         """Send an updated notification immediately, if one exists"""
-        if self.unseen_count:
-            # add unseen messages into seen messages
-            new_messages_to_show = (
-                config['displayed_messages'] - len(self.messages)
-            )
-            self.messages.extend(self.unseen[:new_messages_to_show])
-            self.message_count += self.unseen_count
-            del self.unseen[:]
-            self.unseen_count = 0
+        if self.unsent_count:
+            # add unsent messages into displaying messages
+            to_show = config['displayed_messages']
+            if to_show > 0:
+                new_messages_to_show = to_show - len(self.messages)
+                self.messages.extend(self.unsent[:new_messages_to_show])
+            elif to_show == 0:
+                self.messages.extend(self.unsent)  # zero: display all
+            self.message_count += self.unsent_count
+            del self.unsent[:]
+            self.unsent_count = 0
             # post the new state
             self.repost()
             # we just sent a message, introduce a delay before more are sent
@@ -624,18 +626,18 @@ class Notification:
         self.notifier = notifier
         self.iden = iden
 
-    def check_dismissal(self, always_delete=False, next_action=None):
+    def check_dismissal(self, next_action=None):
         """Check if this notification's push was dismissed and reset if so."""
         http_request(
             method='GET',
             url=BULLET_URL + "pushes/{0}".format(self.iden),
             headers={'Access-Token': config['api_secret']},
             callback=self._check_dismissal_cb,
-            cb_data=(always_delete, next_action),
+            cb_data=next_action,
         )
 
     def _check_dismissal_cb(self, cb_data, http_response, error):
-        always_delete, next_action = cb_data
+        next_action = cb_data
         if error:
             debug(
                 "Bad error while getting pushes/{0}: {1}"
@@ -668,10 +670,7 @@ class Notification:
             next_action()
 
     def delete(self):
-        """
-        Delete this notification's current push, returning False if a bad error
-        occurred.
-        """
+        """Delete this notification's push."""
         http_request(
             method='DELETE',
             url=BULLET_URL + "pushes/{0}".format(self.iden),
