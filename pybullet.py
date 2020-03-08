@@ -535,9 +535,9 @@ class Notifier:
             # we haven't waited long enough, perhaps the timer was increased
             # or we are capped at max_poll_delay
             if self.current_notif:
-                self.current_notif.check_dismissal()
-            # still waiting
-            self.go_wait()
+                self.current_notif.check_dismissal(next_action=self.go_wait)
+            else:
+                self.go_wait()
         else:
             debug("Finished waiting for {0}".format(self.buffer))
             self.waiting_until = None
@@ -546,16 +546,6 @@ class Notifier:
     def send_notification(self):
         """Send an updated notification immediately, if one exists"""
         if self.unsent_count:
-            # add unsent messages into displaying messages
-            to_show = config['displayed_messages']
-            if to_show > 0:
-                new_messages_to_show = to_show - len(self.messages)
-                self.messages.extend(self.unsent[:new_messages_to_show])
-            elif to_show == 0:
-                self.messages.extend(self.unsent)  # zero: display all
-            self.message_count += self.unsent_count
-            del self.unsent[:]
-            self.unsent_count = 0
             # post the new state
             self.repost()
             # we just sent a message, introduce a delay before more are sent
@@ -590,6 +580,16 @@ class Notifier:
         if self.current_notif:
             self.current_notif.delete()
             self.current_notif = None
+        # add unsent messages into displaying messages
+        to_show = config['displayed_messages']
+        if to_show > 0:
+            new_messages_to_show = to_show - len(self.messages)
+            self.messages.extend(self.unsent[:new_messages_to_show])
+        elif to_show == 0:
+            self.messages.extend(self.unsent)  # zero: display all
+        self.message_count += self.unsent_count
+        del self.unsent[:]
+        self.unsent_count = 0
         # POST a new notification
         http_request(
             method='POST',
@@ -634,18 +634,18 @@ class Notification:
         self.notifier = notifier
         self.iden = iden
 
-    def check_dismissal(self, next_action=None):
+    def check_dismissal(self, always_delete=False, next_action=None):
         """Check if this notification's push was dismissed and reset if so."""
         http_request(
             method='GET',
             url=BULLET_URL + "pushes/{0}".format(self.iden),
             headers={'Access-Token': config['api_secret']},
             callback=self._check_dismissal_cb,
-            cb_data=next_action,
+            cb_data=(always_delete, next_action),
         )
 
     def _check_dismissal_cb(self, cb_data, http_response, error):
-        next_action = cb_data
+        always_delete, next_action = cb_data
         if error:
             debug(
                 "Bad error while getting pushes/{0}: {1}"
@@ -662,7 +662,7 @@ class Notification:
                         "Push {0} for {1} was dismissed"
                         .format(self.iden, self.notifier.buffer_show)
                     )
-                    if config['delete_dismissed']:
+                    if always_delete or config['delete_dismissed']:
                         self.delete()
                     self.notifier.reset_seen()
                     if self.notifier.current_notif is self:
