@@ -594,7 +594,7 @@ class Notification(object):
                             next_action=self.reset,
                             continue_if_error=True,
                         )
-            except (JSONDecodeError, KeyError) as ex:
+            except (JSONDecodeError, UnicodeDecodeError, KeyError) as ex:
                 debug("Error while reading push info: {0}".format(ex))
         else:
             debug(
@@ -667,9 +667,9 @@ class Notification(object):
             return
         if http_response.status_code == 200:
             try:
-                self.iden = http_response.json()['iden']
+                self.iden = json.loads(http_response.decode('utf-8'))['iden']
                 debug("Got new iden {0}".format(self.iden))
-            except (JSONDecodeError, KeyError) as ex:
+            except (JSONDecodeError, UnicodeDecodeError, KeyError) as ex:
                 debug("Error reading push creation response: {0}".format(ex))
         else:
             debug(
