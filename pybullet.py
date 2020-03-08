@@ -80,9 +80,10 @@ def http_request(
             )
         options['copypostfields'] = data_bytes
 
-    debug("sending http {0} request to {1}".format(method, repr(url)))
     stash_id = next(http_callback_stash_id_provider)
-    http_callback_stash[stash_id] = (url, callback, cb_data)
+    info = "<{0}: {1} {2}>".format(stash_id, method, repr(url))
+    debug("sending http request for {0}".format(info))
+    http_callback_stash[stash_id] = (info, callback, cb_data)
     debug(
         "http callback stash now has {0} in-flight request(s)"
         .format(len(http_callback_stash))
@@ -97,8 +98,8 @@ def http_request(
 
 
 def http_cb_receiver(data, command, return_code, stdout, stderr):
-    url, callback, cb_data = http_callback_stash.pop(data)
-    debug("got http response back from {0}".format(repr(url)))
+    info, callback, cb_data = http_callback_stash.pop(data)
+    debug("got http response for {0}".format(info))
     if return_code == weechat.WEECHAT_HOOK_PROCESS_ERROR:
         callback(
             cb_data,
