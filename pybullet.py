@@ -171,17 +171,23 @@ def config_as_str(value):
         return str(value)
 
 
-# options (default, type, description)
+def secret_renderer(value):
+    return "[redacted]" if value else repr("")
+
+
+# options (default, type, renderer, description)
 config = {
     'api_secret': (
         "",
         option_string,
+        secret_renderer,
         "PushBullet access token"
     ),
 
     'target_device': (
         "",
         option_string,
+        repr,
         "PushBullet device iden of a specific device to push notifications "
         "to. Leave blank to send to all devices"
     ),
@@ -189,24 +195,28 @@ config = {
     'notification_title': (
         "weechat",
         option_string,
+        repr,
         "Title for notifications sent"
     ),
 
     'only_when_away': (
         False,
         option_boolean,
+        repr,
         "Only send notifications when away"
     ),
 
     'highlights': (
         True,
         option_boolean,
+        repr,
         "Send notifications for highlights"
     ),
 
     'highlight_spam_threshold': (
         10,
         option_integer,
+        repr,
         "If a message highlights this many people in channel, assume it is "
         "spam and do not send a notification. Values less than 2 disable "
         "this heuristic"
@@ -215,12 +225,14 @@ config = {
     'privmsg': (
         True,
         option_boolean,
+        repr,
         "Send notifications for private messages"
     ),
 
     'displayed_messages': (
         3,
         option_integer,
+        repr,
         "Number of messages for which to display the full text. Set to zero "
         "to always show all messages (not a good idea) or negative to never "
         "show message text"
@@ -229,6 +241,7 @@ config = {
     'ignore_after_talk': (
         10,
         option_integer,
+        repr,
         "For this many seconds after you have talked in a buffer, additional "
         "highlights and PMs will be ignored, assuming you saw them"
     ),
@@ -236,6 +249,7 @@ config = {
     'delay_after_talk': (
         90,
         option_integer,
+        repr,
         "For this many seconds after you last talked in a buffer, "
         "notifications will be delayed. If you talk again before this timer, "
         "no notification will appear"
@@ -244,6 +258,7 @@ config = {
     'min_spacing': (
         13,
         option_integer,
+        repr,
         "Notifications for a single buffer will never appear closer together "
         "than this many seconds"
     ),
@@ -251,6 +266,7 @@ config = {
     'long_spacing': (
         200,
         option_integer,
+        repr,
         "After many unseen messages in a channel, wait at least this long "
         "before notifying again - see many_messages"
     ),
@@ -258,6 +274,7 @@ config = {
     'increase_spacing': (
         70,
         option_integer,
+        repr,
         "Each time a notification is received on a very busy channel the next "
         "notification will be delayed this many more seconds."
     ),
@@ -265,6 +282,7 @@ config = {
     'max_poll_delay': (
         90,
         option_integer,
+        repr,
         "Be able to notify again at most this many seconds after a "
         "notification has been dismissed. Not a big deal, leave it high. "
         "Minimum {0}"
@@ -274,6 +292,7 @@ config = {
     'many_messages': (
         8,
         option_integer,
+        repr,
         "After this many messages in a channel, use the long spacing between "
         "notifications - seen long_spacing"
     ),
@@ -281,51 +300,58 @@ config = {
     'short_buffer_name': (
         False,
         option_boolean,
+        repr,
         "Use the short name of the buffer rather than the long one"
     ),
 
     'delete_dismissed': (
         False,
         option_boolean,
+        repr,
         "Delete dismissed notifications"
     ),
 
     'debug': (
         False,
         option_boolean,
+        repr,
         "Print debug info while the app is running"
     ),
 }
-# functions to convert configs read from the application
+# Functions to convert configs read from the application from saved strings to
+# usable internal values
 config_types = {}
+# Functions to render config values to printable values for the console
+config_renderers = {}
 
 
 def init_config():
     """Perform initial configuration of the application settings."""
-    for option, (default_value, config_type, description) in config.items():
+    for option, (default, config_type, renderer, description) in config.items():
         # set config type
         config_types[option] = config_type
+        config_renderers[option] = renderer
         # set descriptions for options
         weechat.config_set_desc_plugin(
             option,
             '{0} (default: "{1}")'.format(
                 description,
-                config_as_str(default_value)
+                config_as_str(default)
             )
         )
         # setdefault the script's options from weechat
         if not weechat.config_is_set_plugin(option):
-            weechat.config_set_plugin(option, config_as_str(default_value))
-            config[option] = default_value
+            weechat.config_set_plugin(option, config_as_str(default))
+            config[option] = default
             debug(
                 'Option "{0}" was not set, is now {1}'
-                .format(option, repr(default_value))
+                .format(option, repr(default))
             )
         else:
             config[option] = config_type(weechat.config_get_plugin(option))
             debug(
                 'Option "{0}" set to {1}'
-                .format(option, repr(config[option]))
+                .format(option, config_renderers[option](config[option]))
             )
 
 
