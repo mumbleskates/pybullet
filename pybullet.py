@@ -59,7 +59,7 @@ def http_request(
 ):
     options = {
         'customrequest': method,
-        'header': 1,
+        'header': "1",
     }
     if headers is not None:
         options['httpheader'] = "\n".join(
@@ -79,7 +79,6 @@ def http_request(
                 .format(type(data))
             )
         options['copypostfields'] = data_bytes
-        options['postfieldsize'] = len(data_bytes)
 
     debug("sending http {0} request to {1}".format(method, repr(url)))
     stash_id = next(http_callback_stash_id_provider)
