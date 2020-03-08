@@ -546,14 +546,8 @@ class Notifier:
         notifications.
         """
         # cancel any current wait
-        if self.wait_hook is not None:
-            debug("Unhooking wait for {0}".format(self.buffer))
-            weechat.unhook(self.wait_hook)
-            self.wait_hook = None
-        self.waiting_until = None
         del self.messages[:]
         self.message_count = 0
-        self.bonus_delay = 0
         self.current_notif = None
 
     def full_reset(self):
@@ -562,6 +556,12 @@ class Notifier:
         channel.
         """
         self.reset_seen()
+        if self.wait_hook is not None:
+            debug("Unhooking wait for {0}".format(self.buffer))
+            weechat.unhook(self.wait_hook)
+            self.wait_hook = None
+        self.waiting_until = None
+        self.bonus_delay = 0
         del self.unseen[:]
         self.unseen_count = 0
 
