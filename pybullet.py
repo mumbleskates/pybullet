@@ -47,7 +47,7 @@ HttpResponse = namedtuple(
 
 # Callback data by
 http_callback_stash = {}
-http_callback_stash_id_provider = map(str, count())
+http_callback_stash_id_provider = ("request" + str(n) for n in count())
 
 
 def http_request(
@@ -81,9 +81,8 @@ def http_request(
         options['copypostfields'] = data_bytes
 
     stash_id = next(http_callback_stash_id_provider)
-    info = "<{0}: {1} {2}>".format(stash_id, method, repr(url))
-    debug("sending http request for {0}".format(info))
-    http_callback_stash[stash_id] = (info, callback, cb_data)
+    debug("sending {0}: {1} {2}".format(stash_id, method, repr(url)))
+    http_callback_stash[stash_id] = (callback, cb_data)
     debug(
         "http callback stash now has {0} in-flight request(s)"
         .format(len(http_callback_stash))
@@ -98,8 +97,9 @@ def http_request(
 
 
 def http_cb_receiver(data, command, return_code, stdout, stderr):
-    info, callback, cb_data = http_callback_stash.pop(data)
-    debug("got http response for {0}".format(info))
+    # data is the stash_id for this request
+    callback, cb_data = http_callback_stash.pop(data)
+    debug("got http response for {0}".format(data))
     if return_code == weechat.WEECHAT_HOOK_PROCESS_ERROR:
         callback(
             cb_data,
@@ -379,43 +379,40 @@ def config_cb(data, option, value):
 
 # Notification functions #
 
-class Notification(object):
-    """Class to track notifications for a particular buffer."""
+class Notifier:
+    """Class to manage notifications for a particular buffer."""
 
     by_buffer = {}
 
     def __init__(self, buffer_name):
-        self.buffer = buffer_name  # full name of buffer
-        self.buffer_show = ""      # display name of buffer
-        self.messages = []         # list of messages displayed
-        self.count = 0             # number of messages
-        self.iden = None           # iden of current push
-        self.waiting_until = None  # whether we are delaying before sending
-        self.wait_hook = None      # hook_timer hook id for our current wait
+        self.buffer = buffer_name   # full name of buffer
+        self.buffer_show = ""       # display name of buffer
+        self.messages = []          # list of messages displayed
+        self.message_count = 0              # number of messages
+        self.unseen = []            # list of unseen messages (w/ no notif sent)
+        self.unseen_count = 0       # number of unseen messages
+        self.current_notif = None   # current push notification
+        self.waiting_until = None   # whether we are delaying before sending
+        self.wait_hook = None       # hook_timer hook id for our current wait
         self.bonus_delay = 0  # total extra delay accrued between notifications
-        self.changed = False  # whether the notification changed since last post
         self.self_last_talked = datetime.min  # last time we talked in the buff
 
     @staticmethod
     def get_for_buffer(buffer_name):
-        note = Notification.by_buffer.get(buffer_name)
+        note = Notifier.by_buffer.get(buffer_name)
         if not note:
-            note = Notification(buffer_name)
-            Notification.by_buffer[buffer_name] = note
+            note = Notifier(buffer_name)
+            Notifier.by_buffer[buffer_name] = note
         return note
 
     def notification_text(self):
         return "\n".join(chain(
-            ["{1}[{0}]".format(
+            ["{0} messages from [{1}]".format(
+                self.message_count,
                 self.buffer_show,
-                (
-                    "{0} messages from ".format(self.count)
-                    if self.count > 1 else
-                    ""
-                )
             )],
             self.messages,
-            ["..."] if self.count > len(self.messages) else ()
+            ["..."] if self.message_count > len(self.messages) else ()
         ))
 
     def pushbullet_json(self):
@@ -437,8 +434,6 @@ class Notification(object):
             debug("No access token set, aborting")
             return
 
-        self.check_dismissal()
-
         if (
             (datetime.utcnow() - self.self_last_talked).total_seconds()
             < config['ignore_after_talk']
@@ -446,18 +441,17 @@ class Notification(object):
             debug("Self talked in channel too recently, ignoring")
             return
 
-        self.changed = True
-
-        # remember message if it will be displayed
+        # remember message if it might be displayed
         to_display = config['displayed_messages']
-        if to_display == 0 or len(self.messages) < to_display:
-            self.messages.append(message)
+        if to_display == 0 or len(self.unseen) < to_display:
+            self.unseen.append(message)
 
         # update count of messages
-        self.count += 1
+        self.unseen_count += 1
 
         if self.waiting_until:
-            pass  # already waiting
+            if self.current_notif:
+                self.current_notif.check_dismissal()
         else:
             self.send_notification()
 
@@ -466,11 +460,8 @@ class Notification(object):
         We talked in the buffer; clear notification, reset status, and set last
         talked time.
         """
-        self.check_dismissal()
-        self.delete(next_action=self.self_talked_cb, continue_if_error=True)
-
-    def self_talked_cb(self):
-        self.reset()
+        self.delete_current_notif()
+        self.full_reset()
         self.self_last_talked = datetime.utcnow()
         # if we are already waiting, bump the timer until our delay_after_talk
         self.delay(config['delay_after_talk'])
@@ -519,13 +510,10 @@ class Notification(object):
         ):
             # we haven't waited long enough, perhaps the timer was increased
             # or we are capped at max_poll_delay
-            self.check_dismissal()
-            if self.waiting_until:
-                # still waiting
-                self.go_wait()
-            else:
-                # notification was dismissed and we were reset
-                self.send_notification()
+            if self.current_notif:
+                self.current_notif.check_dismissal()
+            # still waiting
+            self.go_wait()
         else:
             debug("Finished waiting for {0}".format(self.buffer))
             self.waiting_until = None
@@ -533,21 +521,29 @@ class Notification(object):
 
     def send_notification(self):
         """Send an updated notification immediately, if one exists"""
-        if self.changed:
-            self.check_dismissal()
+        if self.unseen_count:
+            # add unseen messages into seen messages
+            new_messages_to_show = (
+                config['displayed_messages'] - len(self.messages)
+            )
+            self.messages.extend(self.unseen[:new_messages_to_show])
+            self.message_count += self.unseen_count
+            del self.unseen[:]
+            self.unseen_count = 0
+            # post the new state
             self.repost()
-            self.changed = False
             # we just sent a message, introduce a delay before more are sent
-            if self.count < config['many_messages']:
+            if self.message_count < config['many_messages']:
                 self.delay(config['min_spacing'])
             else:
                 self.delay(config['long_spacing'] + self.bonus_delay)
                 if config['increase_spacing'] > 0:
                     self.bonus_delay += config['increase_spacing']
 
-    def reset(self):
+    def reset_seen(self):
         """
-        Reset the state of this notification as it's been seen or dismissed.
+        Reset the state of this notifier as we have at least seen posted
+        notifications.
         """
         # cancel any current wait
         if self.wait_hook is not None:
@@ -556,22 +552,88 @@ class Notification(object):
             self.wait_hook = None
         self.waiting_until = None
         del self.messages[:]
-        self.count = 0
+        self.message_count = 0
         self.bonus_delay = 0
-        self.iden = None
-        self.changed = False
+        self.current_notif = None
+
+    def full_reset(self):
+        """
+        Fully reset the state of this notifier as we are all up to date on this
+        channel.
+        """
+        self.reset_seen()
+        del self.unseen[:]
+        self.unseen_count = 0
+
+    def delete_current_notif(self):
+        if self.current_notif:
+            self.current_notif.delete()
+            self.current_notif = None
+
+    def repost(self):
+        """Delete the old push and post a new one"""
+        debug("Reposting for {0} from iden {1}".format(
+            self.buffer_show,
+            self.current_notif and self.current_notif.iden
+        ))
+        self.delete_current_notif()
+        http_request(
+            method='POST',
+            url=BULLET_URL + "pushes",
+            headers={
+                'Access-Token': config['api_secret'],
+                'Content-Type': "application/json",
+            },
+            data=self.pushbullet_json(),
+            callback=self.repost_cb,
+            cb_data=None,
+        )
+
+    def repost_cb(self, cb_data, http_response, error):
+        if error:
+            debug("Bad error while posting push: {0}".format(error))
+            return
+        if http_response.status_code == 200:
+            try:
+                iden = json.loads(
+                    http_response.body.decode('utf-8')
+                )['iden']
+                debug("Got new iden {0}".format(iden))
+                self.current_notif = Notification(notifier=self, iden=iden)
+            except (JSONDecodeError, UnicodeDecodeError, KeyError) as ex:
+                debug("Error reading push creation response: {0}".format(ex))
+        else:
+            debug(
+                "Error posting push: status {0}"
+                .format(http_response.status_code)
+            )
+
+
+class Notification:
+    """
+    Class to manage the state of a pushed notification. Mostly responsible for
+    deleting individual notifications and checking their status. Once created,
+    the iden of this notification never changes.
+    """
+
+    def __init__(self, notifier, iden):
+        self.notifier = notifier
+        self.iden = iden
+        # track whether we have an in-flight request to check on the notif's
+        # status
+        self.check_is_inflight = False
 
     def check_dismissal(self):
         """Check if this notification's push was dismissed and reset if so."""
-        if not self.iden:
-            return
-        http_request(
-            method='GET',
-            url=BULLET_URL + "pushes/{0}".format(self.iden),
-            headers={'Access-Token': config['api_secret']},
-            callback=self.check_dismissal_cb,
-            cb_data=None,
-        )
+        if not self.check_is_inflight:
+            self.check_is_inflight = True
+            http_request(
+                method='GET',
+                url=BULLET_URL + "pushes/{0}".format(self.iden),
+                headers={'Access-Token': config['api_secret']},
+                callback=self.check_dismissal_cb,
+                cb_data=None,
+            )
 
     def check_dismissal_cb(self, cb_data, http_response, error):
         if error:
@@ -582,19 +644,20 @@ class Notification(object):
             return
 
         # reset and possibly delete if it's marked as dismissed
-        if not self.iden:
-            return  # nothing to do if we are not tracking a notification
-
         if http_response.status_code == 200:
             try:
                 if json.loads(http_response.body.decode('utf-8'))['dismissed']:
-                    # reset self
-                    debug("Push for {0} was dismissed".format(self.buffer_show))
+                    # dismissed notifications are deleted only if configured,
+                    # but we forget about them even if they are not deleted,
+                    # and we reset the notifier's timers when a notification is
+                    # found to be dismissed.
+                    debug(
+                        "Push {0} for {1} was dismissed"
+                        .format(self.iden, self.notifier.buffer_show)
+                    )
                     if config['delete_dismissed']:
-                        self.delete(
-                            next_action=self.reset,
-                            continue_if_error=True,
-                        )
+                        self.delete()
+                    self.notifier.reset_seen()
             except (JSONDecodeError, UnicodeDecodeError, KeyError) as ex:
                 debug("Error while reading push info: {0}".format(ex))
         else:
@@ -602,82 +665,31 @@ class Notification(object):
                 "Error while getting push info: status {0}"
                 .format(http_response.status_code)
             )
+        self.check_is_inflight = False
 
-    def delete(self, next_action=None, continue_if_error=False):
+    def delete(self):
         """
         Delete this notification's current push, returning False if a bad error
         occurred.
         """
-        if self.iden:
-            http_request(
-                method='DELETE',
-                url=BULLET_URL + "pushes/{0}".format(self.iden),
-                headers={'Access-Token': config['api_secret']},
-                callback=self.delete_cb,
-                cb_data=(next_action, continue_if_error),
-            )
-        else:
-            if next_action is not None:
-                next_action()
+        http_request(
+            method='DELETE',
+            url=BULLET_URL + "pushes/{0}".format(self.iden),
+            headers={'Access-Token': config['api_secret']},
+            callback=self.delete_cb,
+            cb_data=None,
+        )
 
     def delete_cb(self, cb_data, http_response, error):
-        next_action, continue_if_error = cb_data
         if error:
             debug(
                 "Bad error while deleting pushes/{0}: {1}"
                 .format(self.iden, error)
             )
-            if next_action is not None and continue_if_error:
-                next_action()
-            return
-        if self.iden:
-            if http_response.status_code not in (200, 404):
-                debug(
-                    "Failed to delete pushes/{0} with status code {1}"
-                    .format(self.iden, http_response.status_code)
-                )
-            else:
-                self.iden = None
-        if next_action is not None:
-            next_action()
-
-    def repost(self):
-        """Delete the old push and post a new one"""
-        debug(
-            "Reposting for {0} from iden {1}"
-            .format(self.buffer_show, self.iden)
-        )
-        self.delete(next_action=self.post, continue_if_error=False)
-
-    def post(self):
-        http_request(
-            method='POST',
-            url=BULLET_URL + "pushes",
-            headers={
-                'Access-Token': config['api_secret'],
-                'Content-Type': "application/json",
-            },
-            data=self.pushbullet_json(),
-            callback=self.post_cb,
-            cb_data=None,
-        )
-
-    def post_cb(self, cb_data, http_response, error):
-        if error:
-            debug("Bad error while posting push: {0}".format(error))
-            return
-        if http_response.status_code == 200:
-            try:
-                self.iden = json.loads(
-                    http_response.body.decode('utf-8')
-                )['iden']
-                debug("Got new iden {0}".format(self.iden))
-            except (JSONDecodeError, UnicodeDecodeError, KeyError) as ex:
-                debug("Error reading push creation response: {0}".format(ex))
-        else:
+        elif http_response.status_code not in (200, 404):
             debug(
-                "Error posting push: status {0}"
-                .format(http_response.status_code)
+                "Failed to delete pushes/{0} with status code {1}"
+                .format(self.iden, http_response.status_code)
             )
 
 
@@ -690,7 +702,7 @@ def dispatch_notification(buffer_ptr, buffer_name, prefix, message):
 
     debug("Dispatching notification for {0}".format(buffer_name))
     # send the notification
-    Notification.get_for_buffer(buffer_name).add_message(
+    Notifier.get_for_buffer(buffer_name).add_message(
         show_buffer_name,
         "<{0}> {1}".format(prefix, message)
     )
@@ -698,7 +710,7 @@ def dispatch_notification(buffer_ptr, buffer_name, prefix, message):
 
 def dispatch_self_talked(buffer_name):
     """Self talked in the buffer, mark and clear status"""
-    Notification.get_for_buffer(buffer_name).self_talked()
+    Notifier.get_for_buffer(buffer_name).self_talked()
 
 
 # Heuristics #
@@ -789,7 +801,7 @@ def print_cb(
 # noinspection PyUnusedLocal
 def done_waiting_cb(data, remaining_calls):
     """Callback for hook_timer; data will be set to the name of the buffer"""
-    Notification.get_for_buffer(data).done_waiting()
+    Notifier.get_for_buffer(data).done_waiting()
     return weechat.WEECHAT_RC_OK
 
 
@@ -818,7 +830,13 @@ if __name__ == '__main__':
         "config"                            # data given to callback function
     )
 
-    weechat.prnt(
-        "", "{0}: loaded and running on python {1}. Debug is {2}"
-        .format(NAME, repr(sys.version), config_as_str(config['debug']))
-    )
+    if config['debug']:
+        weechat.prnt(
+            "", "{0}: loaded and running on python {2}. Debug is {1}"
+            .format(NAME, config_as_str(config['debug']), repr(sys.version))
+        )
+    else:
+        weechat.prnt(
+            "", "{0}: loaded and running. Debug is {1}"
+            .format(NAME, config_as_str(config['debug']))
+        )
