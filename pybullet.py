@@ -464,8 +464,20 @@ class Notifier:
         We talked in the buffer; clear notification, reset status, and set last
         talked time.
         """
-        self.delete_current_notif(check_dismissal=False)
-        self.full_reset()
+        if self.current_notif:
+            self.current_notif.delete()
+        self.current_notif = None
+        # fully reset the state of the notifier now that we are all up to date
+        # on this channel
+        self.reset_seen()
+        if self.wait_hook is not None:
+            debug("Unhooking wait for {0}".format(self.buffer))
+            weechat.unhook(self.wait_hook)
+            self.wait_hook = None
+        self.waiting_until = None
+        self.bonus_delay = 0
+        del self.unseen[:]
+        self.unseen_count = 0
         self.self_last_talked = datetime.utcnow()
         # if we are already waiting, bump the timer until our delay_after_talk
         self.delay(config['delay_after_talk'])
@@ -553,40 +565,22 @@ class Notifier:
         del self.messages[:]
         self.message_count = 0
 
-    def full_reset(self):
-        """
-        Fully reset the state of this notifier as we are all up to date on this
-        channel.
-        """
-        self.reset_seen()
-        if self.wait_hook is not None:
-            debug("Unhooking wait for {0}".format(self.buffer))
-            weechat.unhook(self.wait_hook)
-            self.wait_hook = None
-        self.waiting_until = None
-        self.bonus_delay = 0
-        del self.unseen[:]
-        self.unseen_count = 0
-
-    def delete_current_notif(self, check_dismissal=False):
-        """
-        Delete the current notification if it exists. If check_dismissal is
-        True, check to see if it was dismissed first.
-        """
-        if self.current_notif:
-            if check_dismissal:
-                self.current_notif.check_dismissal(always_delete=True)
-            else:
-                self.current_notif.delete()
-            self.current_notif = None
-
     def repost(self):
         """Delete the old push and post a new one"""
         debug("Reposting for {0} from iden {1}".format(
             self.buffer_show,
             self.current_notif and self.current_notif.iden
         ))
-        self.delete_current_notif(check_dismissal=True)
+        if self.current_notif:
+            self.current_notif.check_dismissal(next_action=self._do_repost)
+        else:
+            self._do_repost()
+
+    def _do_repost(self):
+        if self.current_notif:
+            self.current_notif.delete()
+            self.current_notif = None
+        # POST a new notification
         http_request(
             method='POST',
             url=BULLET_URL + "pushes",
@@ -595,11 +589,11 @@ class Notifier:
                 'Content-Type': "application/json",
             },
             data=self.pushbullet_json(),
-            callback=self.repost_cb,
+            callback=self._repost_cb,
             cb_data=None,
         )
 
-    def repost_cb(self, cb_data, http_response, error):
+    def _repost_cb(self, cb_data, http_response, error):
         if error:
             debug("Bad error while posting push: {0}".format(error))
             return
@@ -629,33 +623,25 @@ class Notification:
     def __init__(self, notifier, iden):
         self.notifier = notifier
         self.iden = iden
-        # track whether we have an in-flight request to check on the notif's
-        # status
-        self.check_is_inflight = False
 
-    def check_dismissal(self, always_delete=False):
+    def check_dismissal(self, always_delete=False, next_action=None):
         """Check if this notification's push was dismissed and reset if so."""
-        if not self.check_is_inflight:
-            self.check_is_inflight = True
-            http_request(
-                method='GET',
-                url=BULLET_URL + "pushes/{0}".format(self.iden),
-                headers={'Access-Token': config['api_secret']},
-                callback=self.check_dismissal_cb,
-                cb_data=always_delete,
-            )
+        http_request(
+            method='GET',
+            url=BULLET_URL + "pushes/{0}".format(self.iden),
+            headers={'Access-Token': config['api_secret']},
+            callback=self._check_dismissal_cb,
+            cb_data=(always_delete, next_action),
+        )
 
-    def check_dismissal_cb(self, cb_data, http_response, error):
-        always_delete = cb_data
+    def _check_dismissal_cb(self, cb_data, http_response, error):
+        always_delete, next_action = cb_data
         if error:
             debug(
                 "Bad error while getting pushes/{0}: {1}"
                 .format(self.iden, error)
             )
-            return
-
-        # reset and possibly delete if it's marked as dismissed
-        if http_response.status_code == 200:
+        elif http_response.status_code == 200:
             try:
                 if json.loads(http_response.body.decode('utf-8'))['dismissed']:
                     # dismissed notifications are deleted only if configured,
@@ -666,14 +652,11 @@ class Notification:
                         "Push {0} for {1} was dismissed"
                         .format(self.iden, self.notifier.buffer_show)
                     )
-                    if always_delete or config['delete_dismissed']:
+                    if config['delete_dismissed']:
                         self.delete()
                     self.notifier.reset_seen()
                     if self.notifier.current_notif is self:
                         self.notifier.current_notif = None
-                else:
-                    if always_delete:
-                        self.delete()
             except (JSONDecodeError, UnicodeDecodeError, KeyError) as ex:
                 debug("Error while reading push info: {0}".format(ex))
         else:
@@ -681,7 +664,8 @@ class Notification:
                 "Error while getting push info: status {0}"
                 .format(http_response.status_code)
             )
-        self.check_is_inflight = False
+        if next_action:
+            next_action()
 
     def delete(self):
         """
@@ -692,11 +676,11 @@ class Notification:
             method='DELETE',
             url=BULLET_URL + "pushes/{0}".format(self.iden),
             headers={'Access-Token': config['api_secret']},
-            callback=self.delete_cb,
+            callback=self._delete_cb,
             cb_data=None,
         )
 
-    def delete_cb(self, cb_data, http_response, error):
+    def _delete_cb(self, cb_data, http_response, error):
         if error:
             debug(
                 "Bad error while deleting pushes/{0}: {1}"
