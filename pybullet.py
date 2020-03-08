@@ -548,7 +548,6 @@ class Notifier:
         # cancel any current wait
         del self.messages[:]
         self.message_count = 0
-        self.current_notif = None
 
     def full_reset(self):
         """
@@ -657,8 +656,8 @@ class Notification:
                 if json.loads(http_response.body.decode('utf-8'))['dismissed']:
                     # dismissed notifications are deleted only if configured,
                     # but we forget about them even if they are not deleted,
-                    # and we reset the notifier's timers when a notification is
-                    # found to be dismissed.
+                    # and we mark their messages as seen when they are found to
+                    # be dismissed.
                     debug(
                         "Push {0} for {1} was dismissed"
                         .format(self.iden, self.notifier.buffer_show)
@@ -666,6 +665,8 @@ class Notification:
                     if always_delete or config['delete_dismissed']:
                         self.delete()
                     self.notifier.reset_seen()
+                    if self.notifier.current_notif is self:
+                        self.notifier.current_notif = None
                 else:
                     if always_delete:
                         self.delete()
