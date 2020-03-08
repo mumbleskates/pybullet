@@ -116,7 +116,8 @@ def http_cb_receiver(data, command, return_code, stdout, stderr):
         header = header_bytes.decode('ascii')
         [status_line, *header_lines] = header.split("\r\n")
         http_version, _, status_str = status_line.partition(" ")
-        status_code = int(status_str)
+        status_code_str, _, status_code_name = status_str.partition(" ")
+        status_code = int(status_code_str)
         header_dict = {
             field: value.strip()
             for field, _, value in (
