@@ -10,6 +10,6 @@ Notifications are grouped per channel, have increasing delays if ignored, previe
 - Notification grouping and smart dismissal
 - Full Unicode compatibility, emoji included
 - Customizable delays
-- Python 2.7 and 3.5 compatible
+- Python 3.5+ compatible
 
 Feel free to submit feature requests and issues; this is a dogfood plugin in progress.
