@@ -407,9 +407,13 @@ class Notifier:
 
     def notification_text(self):
         return "\n".join(chain(
-            ["{0} messages from [{1}]".format(
-                self.message_count,
+            ["{1}[{0}]".format(
                 self.buffer_show,
+                (
+                    "{0} messages from ".format(self.message_count)
+                    if self.message_count > 1 else
+                    ""
+                )
             )],
             self.messages,
             ["..."] if self.message_count > len(self.messages) else ()
