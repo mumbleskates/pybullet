@@ -929,13 +929,8 @@ if __name__ == '__main__':
         "config"                            # data given to callback function
     )
 
-    if config['debug']:
-        weechat.prnt(
-            "", "{0}: loaded and running on python {2}. Debug is {1}"
-            .format(NAME, config_as_str(config['debug']), repr(sys.version))
-        )
-    else:
-        weechat.prnt(
-            "", "{0}: loaded and running. Debug is {1}"
-            .format(NAME, config_as_str(config['debug']))
-        )
+    weechat.prnt(
+        "", "{0}: loaded and running. Debug is {1}"
+        .format(NAME, config_as_str(config['debug']), repr(sys.version))
+    )
+    debug("Python version is {0}".format(repr(sys.version)))
