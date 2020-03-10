@@ -9,6 +9,8 @@ import sys
 import weechat
 
 
+# Constants #
+
 LICENSE = "MIT"
 
 NAME = "pybullet"
@@ -27,119 +29,6 @@ TIMER_GRACE = timedelta(seconds=1)
 # this
 MIN_POLL_DELAY = 20
 HTTP_TIMEOUT = 30 * 1000  # milliseconds
-
-
-class RequestException(Exception):
-    pass
-
-
-# HTTP response.
-#   http_version: str
-#   status_code: int
-#   headers: dict[str, str]
-#   body: bytes
-#   stderr: bytes or str
-HttpResponse = namedtuple(
-    'HttpResponse',
-    'http_version status_code headers body stderr'
-)
-
-
-# Callback data by
-http_callback_stash = {}
-http_callback_stash_id_provider = ("request" + str(n) for n in count())
-
-
-def http_request(
-    method, url,
-    headers=None,
-    data=None,
-    callback=None,
-    cb_data=None
-):
-    options = {
-        'customrequest': method,
-        'header': "1",
-    }
-    if headers is not None:
-        options['httpheader'] = "\n".join(
-            "{0}: {1}".format(k, v)
-            for k, v in headers.items()
-        )
-    if data is not None:
-        if isinstance(data, str):
-            data_bytes = data.encode('utf-8')
-        elif isinstance(data, bytes):
-            data_bytes = data
-        elif isinstance(data, (list, dict)):
-            data_bytes = json.dumps(data).encode('utf-8')
-        else:
-            raise ValueError(
-                "Bad type {0} passed to http_request data param"
-                .format(type(data))
-            )
-        options['copypostfields'] = data_bytes
-
-    stash_id = next(http_callback_stash_id_provider)
-    debug("sending {0}: {1} {2}".format(stash_id, method, repr(url)))
-    http_callback_stash[stash_id] = (callback, cb_data)
-    debug(
-        "http callback stash now has {0} in-flight request(s)"
-        .format(len(http_callback_stash))
-    )
-    weechat.hook_process_hashtable(
-        "url:{0}".format(url),
-        options,
-        HTTP_TIMEOUT,
-        'http_cb_receiver',
-        stash_id,
-    )
-
-
-def http_cb_receiver(data, command, return_code, stdout, stderr):
-    # data is the stash_id for this request
-    callback, cb_data = http_callback_stash.pop(data)
-    debug("got http response for {0}".format(data))
-    if return_code == weechat.WEECHAT_HOOK_PROCESS_ERROR:
-        callback(
-            cb_data,
-            None,
-            RequestException("Error with command {0}".format(repr(command)))
-        )
-        return weechat.WEECHAT_RC_OK
-    try:
-        # We receive http responses with the response header intact so we
-        # can parse out the status etc.
-        if isinstance(stdout, str):
-            # weechat returns str unless the content is not valid utf-8.
-            stdout = stdout.encode('utf-8')
-        header_bytes, _, body = stdout.partition(b"\r\n\r\n")
-        header = header_bytes.decode('ascii')
-        [status_line, *header_lines] = header.split("\r\n")
-        http_version, _, status_str = status_line.partition(" ")
-        status_code_str, _, status_code_name = status_str.partition(" ")
-        status_code = int(status_code_str)
-        header_dict = {
-            field: value.strip()
-            for field, _, value in (
-                line.partition(":") for line in header_lines
-            )
-        }
-        response = HttpResponse(
-            http_version=http_version,
-            status_code=status_code,
-            headers=header_dict,
-            body=body,
-            stderr=stderr,
-        )
-        callback(cb_data, response, error=None)
-    except (UnicodeDecodeError, ValueError) as ex:
-        callback(
-            cb_data,
-            None,
-            error=RequestException("bad HTTP header received: {0}".format(ex)),
-         )
-    return weechat.WEECHAT_RC_OK
 
 
 # Configuration #
@@ -385,6 +274,205 @@ def config_cb(data, option, value):
     return weechat.WEECHAT_RC_OK
 
 
+# Async #
+
+# http request data, a dict of {stash_id: coroutine}
+async_stash = {}
+http_stash_id_provider = ("request" + str(n) for n in count())
+
+
+class SimpleCoroutine:
+    """
+    Same as a regular generator, but complains when it is GC'd before being
+    completely iterated.
+    """
+
+    def __init__(self, generator):
+        self.generator = generator
+        self.finished = False
+
+    def final_check(self):
+        if not self.finished:
+            debug(
+                "SimpleCoroutine {0} disposed without being completed!"
+                .format(self.generator.__name__)
+            )
+
+    def __next__(self):
+        try:
+            return next(self.generator)
+        except StopIteration as ex:
+            self.finished = True
+            raise ex
+
+    def send(self, value):
+        try:
+            return self.generator.send(value)
+        except StopIteration as ex:
+            self.finished = True
+            raise ex
+
+    def throw(self, error):
+        try:
+            return self.generator.throw(error)
+        except StopIteration as ex:
+            self.finished = True
+            raise ex
+
+
+def simple_coroutine(generator):
+    """Decorator for wrapping generators in a SimpleCoroutine."""
+
+    def dec(*args, **kwargs):
+        return SimpleCoroutine(generator(*args, **kwargs))
+
+    return dec
+
+
+def run_async(coroutine):
+    try:
+        async_stash[next(coroutine)] = coroutine
+        debug(
+            "async stash now has {0} in-flight request(s)"
+            .format(len(async_stash))
+        )
+    except StopIteration:
+        pass
+
+
+def send_async(coroutine, value):
+    try:
+        async_stash[coroutine.send(value)] = coroutine
+        debug(
+            "async stash now has {0} in-flight request(s)"
+            .format(len(async_stash))
+        )
+    except StopIteration:
+        pass
+
+
+def throw_async(coroutine, error):
+    try:
+        async_stash[coroutine.throw(error)] = coroutine
+        debug(
+            "async stash now has {0} in-flight request(s)"
+            .format(len(async_stash))
+        )
+    except StopIteration:
+        pass
+
+
+class RequestException(Exception):
+    pass
+
+
+# HTTP response.
+#   http_version: str
+#   status_code: int
+#   headers: dict[str, str]
+#   body: bytes
+#   stderr: bytes or str
+HttpResponse = namedtuple(
+    'HttpResponse',
+    'http_version status_code headers body stderr'
+)
+
+
+@simple_coroutine
+def http_request(method, url, headers=None, data=None):
+    """Coroutine that returns a response for an HTTP request."""
+    # This is accomplished by registering the hook with weechat, then yielding
+    # the stash id of the request to the top level. Our callback to the hook
+    # will take the coroutine out of the stash by the stash id and send it the
+    # response (or an exception).
+    response = yield _http_request_hook(method, url, headers=headers, data=data)
+    return response
+
+
+def _http_request_hook(
+    method, url,
+    headers=None,
+    data=None,
+):
+    options = {
+        'customrequest': method,
+        'header': "1",
+    }
+    if headers is not None:
+        options['httpheader'] = "\n".join(
+            "{0}: {1}".format(k, v)
+            for k, v in headers.items()
+        )
+    if data is not None:
+        if isinstance(data, str):
+            data_bytes = data.encode('utf-8')
+        elif isinstance(data, bytes):
+            data_bytes = data
+        elif isinstance(data, (list, dict)):
+            data_bytes = json.dumps(data).encode('utf-8')
+        else:
+            raise ValueError(
+                "Bad type {0} passed to http_request data param"
+                .format(type(data))
+            )
+        options['copypostfields'] = data_bytes
+
+    stash_id = next(http_stash_id_provider)
+    debug("sending {0}: {1} {2}".format(stash_id, method, repr(url)))
+    weechat.hook_process_hashtable(
+        "url:{0}".format(url),
+        options,
+        HTTP_TIMEOUT,
+        'http_cb_receiver',
+        stash_id,
+    )
+    return stash_id
+
+
+def http_cb_receiver(data, command, return_code, stdout, stderr):
+    # data is the stash_id for this request
+    coroutine = async_stash.pop(data)
+    debug("got http response for {0}".format(data))
+    if return_code == weechat.WEECHAT_HOOK_PROCESS_ERROR:
+        throw_async(
+            coroutine,
+            RequestException("Error with command {0}".format(repr(command)))
+        )
+        return weechat.WEECHAT_RC_OK
+    try:
+        # We receive http responses with the response header intact so we
+        # can parse out the status etc.
+        if isinstance(stdout, str):
+            # weechat returns str unless the content is not valid utf-8.
+            stdout = stdout.encode('utf-8')
+        header_bytes, _, body = stdout.partition(b"\r\n\r\n")
+        header = header_bytes.decode('ascii')
+        [status_line, *header_lines] = header.split("\r\n")
+        http_version, _, status_str = status_line.partition(" ")
+        status_code_str, _, status_code_name = status_str.partition(" ")
+        status_code = int(status_code_str)
+        header_dict = {
+            field: value.strip()
+            for field, _, value in (
+                line.partition(":") for line in header_lines
+            )
+        }
+        response = HttpResponse(
+            http_version=http_version,
+            status_code=status_code,
+            headers=header_dict,
+            body=body,
+            stderr=stderr,
+        )
+        send_async(coroutine, response)
+    except (UnicodeDecodeError, ValueError) as ex:
+        throw_async(
+            coroutine,
+            RequestException("bad HTTP header received: {0}".format(ex))
+        )
+    return weechat.WEECHAT_RC_OK
+
+
 # Notification functions #
 
 class Notifier:
@@ -438,6 +526,7 @@ class Notifier:
             result['device_iden'] = config['target_device']
         return result
 
+    @simple_coroutine
     def add_message(self, show_buffer_name, message):
         """Add a message to this notification and update the push."""
         self.buffer_show = show_buffer_name
@@ -463,17 +552,18 @@ class Notifier:
 
         if self.waiting_until:
             if self.current_notif:
-                self.current_notif.check_dismissal()
+                yield from self.current_notif.check_dismissal()
         else:
-            self.send_notification()
+            yield from self.send_notification()
 
+    @simple_coroutine
     def self_talked(self):
         """
         We talked in the buffer; clear notification, reset status, and set last
         talked time.
         """
         if self.current_notif:
-            self.current_notif.delete()
+            run_async(self.current_notif.delete())
         self.current_notif = None
         # fully reset the state of the notifier now that we are all up to date
         # on this channel
@@ -488,8 +578,9 @@ class Notifier:
         self.unsent_count = 0
         self.self_last_talked = datetime.utcnow()
         # if we are already waiting, bump the timer until our delay_after_talk
-        self.delay(config['delay_after_talk'])
+        yield from self.delay(config['delay_after_talk'])
 
+    @simple_coroutine
     def delay(self, seconds):
         """
         Ensure that there is a running timer hook for the time <seconds> from
@@ -500,8 +591,9 @@ class Notifier:
             self.waiting_until = max(self.waiting_until, after_delay)
         else:
             self.waiting_until = after_delay
-            self.go_wait()
+            yield from self.go_wait()
 
+    @simple_coroutine
     def go_wait(self):
         """Set callback hook to wait until our destination time"""
         seconds = (self.waiting_until - datetime.utcnow()).total_seconds()
@@ -520,8 +612,9 @@ class Notifier:
             )
         else:  # waiting_until already passed, don't wait at all actually
             self.waiting_until = None
-            self.send_notification()
+            yield from self.send_notification()
 
+    @simple_coroutine
     def done_waiting(self):
         """
         Timer has returned at approximately the given time. Only sent from
@@ -535,24 +628,24 @@ class Notifier:
             # we haven't waited long enough, perhaps the timer was increased
             # or we are capped at max_poll_delay
             if self.current_notif:
-                self.current_notif.check_dismissal(next_action=self.go_wait)
-            else:
-                self.go_wait()
+                yield from self.current_notif.check_dismissal()
+            yield from self.go_wait()
         else:
             debug("Finished waiting for {0}".format(self.buffer))
             self.waiting_until = None
-            self.send_notification()
+            yield from self.send_notification()
 
+    @simple_coroutine
     def send_notification(self):
         """Send an updated notification immediately, if one exists"""
         if self.unsent_count:
             # post the new state
-            self.repost()
+            yield from self.repost()
             # we just sent a message, introduce a delay before more are sent
             if self.message_count < config['many_messages']:
-                self.delay(config['min_spacing'])
+                yield from self.delay(config['min_spacing'])
             else:
-                self.delay(config['long_spacing'] + self.bonus_delay)
+                yield from self.delay(config['long_spacing'] + self.bonus_delay)
                 if config['increase_spacing'] > 0:
                     self.bonus_delay += config['increase_spacing']
 
@@ -565,6 +658,7 @@ class Notifier:
         del self.messages[:]
         self.message_count = 0
 
+    @simple_coroutine
     def repost(self):
         """Delete the old push and post a new one"""
         debug("Reposting for {0} from iden {1}".format(
@@ -572,13 +666,10 @@ class Notifier:
             self.current_notif and self.current_notif.iden
         ))
         if self.current_notif:
-            self.current_notif.check_dismissal(next_action=self._do_repost)
-        else:
-            self._do_repost()
+            yield from self.current_notif.check_dismissal()
 
-    def _do_repost(self):
         if self.current_notif:
-            self.current_notif.delete()
+            run_async(self.current_notif.delete())
             self.current_notif = None
         # add unsent messages into displaying messages
         to_show = config['displayed_messages']
@@ -591,22 +682,20 @@ class Notifier:
         del self.unsent[:]
         self.unsent_count = 0
         # POST a new notification
-        http_request(
-            method='POST',
-            url=BULLET_URL + "pushes",
-            headers={
-                'Access-Token': config['api_secret'],
-                'Content-Type': "application/json",
-            },
-            data=self.pushbullet_json(),
-            callback=self._repost_cb,
-            cb_data=None,
-        )
-
-    def _repost_cb(self, cb_data, http_response, error):
-        if error:
-            debug("Bad error while posting push: {0}".format(error))
+        try:
+            http_response = yield from http_request(
+                method='POST',
+                url=BULLET_URL + "pushes",
+                headers={
+                    'Access-Token': config['api_secret'],
+                    'Content-Type': "application/json",
+                },
+                data=self.pushbullet_json(),
+            )
+        except RequestException as ex:
+            debug("Bad error while posting push: {0}".format(ex))
             return
+
         if http_response.status_code == 200:
             try:
                 iden = json.loads(
@@ -634,24 +723,23 @@ class Notification:
         self.notifier = notifier
         self.iden = iden
 
-    def check_dismissal(self, always_delete=False, next_action=None):
+    @simple_coroutine
+    def check_dismissal(self, always_delete=False):
         """Check if this notification's push was dismissed and reset if so."""
-        http_request(
-            method='GET',
-            url=BULLET_URL + "pushes/{0}".format(self.iden),
-            headers={'Access-Token': config['api_secret']},
-            callback=self._check_dismissal_cb,
-            cb_data=(always_delete, next_action),
-        )
-
-    def _check_dismissal_cb(self, cb_data, http_response, error):
-        always_delete, next_action = cb_data
-        if error:
+        try:
+            http_response = yield from http_request(
+                method='GET',
+                url=BULLET_URL + "pushes/{0}".format(self.iden),
+                headers={'Access-Token': config['api_secret']},
+            )
+        except RequestException as ex:
             debug(
                 "Bad error while getting pushes/{0}: {1}"
-                .format(self.iden, error)
+                .format(self.iden, ex)
             )
-        elif http_response.status_code == 200:
+            return
+
+        if http_response.status_code == 200:
             try:
                 if json.loads(http_response.body.decode('utf-8'))['dismissed']:
                     # dismissed notifications are deleted only if configured,
@@ -663,7 +751,7 @@ class Notification:
                         .format(self.iden, self.notifier.buffer_show)
                     )
                     if always_delete or config['delete_dismissed']:
-                        self.delete()
+                        run_async(self.delete())
                     self.notifier.reset_seen()
                     if self.notifier.current_notif is self:
                         self.notifier.current_notif = None
@@ -674,32 +762,29 @@ class Notification:
                 "Error while getting push info: status {0}"
                 .format(http_response.status_code)
             )
-        if next_action:
-            next_action()
 
+    @simple_coroutine
     def delete(self):
         """Delete this notification's push."""
-        http_request(
-            method='DELETE',
-            url=BULLET_URL + "pushes/{0}".format(self.iden),
-            headers={'Access-Token': config['api_secret']},
-            callback=self._delete_cb,
-            cb_data=None,
-        )
-
-    def _delete_cb(self, cb_data, http_response, error):
-        if error:
+        try:
+            http_response = yield from http_request(
+                method='DELETE',
+                url=BULLET_URL + "pushes/{0}".format(self.iden),
+                headers={'Access-Token': config['api_secret']},
+            )
+            if http_response.status_code not in (200, 404):
+                debug(
+                    "Failed to delete pushes/{0} with status code {1}"
+                    .format(self.iden, http_response.status_code)
+                )
+        except RequestException as ex:
             debug(
                 "Bad error while deleting pushes/{0}: {1}"
-                .format(self.iden, error)
-            )
-        elif http_response.status_code not in (200, 404):
-            debug(
-                "Failed to delete pushes/{0} with status code {1}"
-                .format(self.iden, http_response.status_code)
+                .format(self.iden, ex)
             )
 
 
+@simple_coroutine
 def dispatch_notification(buffer_ptr, buffer_name, prefix, message):
     """Send a notification for a buffer"""
     if config['short_buffer_name']:
@@ -709,15 +794,16 @@ def dispatch_notification(buffer_ptr, buffer_name, prefix, message):
 
     debug("Dispatching notification for {0}".format(buffer_name))
     # send the notification
-    Notifier.get_for_buffer(buffer_name).add_message(
+    yield from Notifier.get_for_buffer(buffer_name).add_message(
         show_buffer_name,
         "<{0}> {1}".format(prefix, message)
     )
 
 
+@simple_coroutine
 def dispatch_self_talked(buffer_name):
     """Self talked in the buffer, mark and clear status"""
-    Notifier.get_for_buffer(buffer_name).self_talked()
+    yield from Notifier.get_for_buffer(buffer_name).self_talked()
 
 
 # Heuristics #
@@ -784,7 +870,7 @@ def print_cb(
     my_nick = weechat.buffer_get_string(buffer_ptr, 'localvar_nick')
     if "nick_{0}".format(my_nick) in tags:
         debug("Dispatching self talked for {0}".format(buffer_name))
-        dispatch_self_talked(buffer_name)
+        run_async(dispatch_self_talked(buffer_name))
 
     # highlight
     elif config['highlights'] and int(is_highlight):
@@ -794,12 +880,16 @@ def print_cb(
                 .format(buffer_name)
             )
         else:
-            dispatch_notification(buffer_ptr, buffer_name, prefix, message)
+            run_async(
+                dispatch_notification(buffer_ptr, buffer_name, prefix, message)
+            )
     elif (
         config['privmsg']
         and weechat.buffer_get_string(buffer_ptr, 'localvar_type') == "private"
     ):
-        dispatch_notification(buffer_ptr, buffer_name, prefix, message)
+        run_async(
+            dispatch_notification(buffer_ptr, buffer_name, prefix, message)
+        )
 
     return weechat.WEECHAT_RC_OK
 
@@ -808,7 +898,7 @@ def print_cb(
 # noinspection PyUnusedLocal
 def done_waiting_cb(data, remaining_calls):
     """Callback for hook_timer; data will be set to the name of the buffer"""
-    Notifier.get_for_buffer(data).done_waiting()
+    run_async(Notifier.get_for_buffer(data).done_waiting())
     return weechat.WEECHAT_RC_OK
 
 
