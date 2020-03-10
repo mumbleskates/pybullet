@@ -425,7 +425,7 @@ class Notifier:
         self.buffer = buffer_name   # full name of buffer
         self.buffer_show = ""       # display name of buffer
         self.messages = []          # list of messages displayed
-        self.message_count = 0              # number of messages
+        self.message_count = 0      # number of messages
         self.unsent = []            # list of unsent messages (w/ no notif sent)
         self.unsent_count = 0       # number of unsent messages
         self.current_notif = None   # current push notification
