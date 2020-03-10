@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from collections import namedtuple
 from datetime import datetime, timedelta
+from functools import wraps
 from itertools import chain, count
 import json
 from json import JSONDecodeError
@@ -320,13 +321,14 @@ class SimpleCoroutine:
             raise ex
 
 
-def simple_coroutine(generator):
+def simple_coroutine(generator_fn):
     """Decorator for wrapping generators in a SimpleCoroutine."""
 
-    def dec(*args, **kwargs):
-        return SimpleCoroutine(generator(*args, **kwargs))
+    @wraps(generator_fn)
+    def make_coroutine(*args, **kwargs):
+        return SimpleCoroutine(generator_fn(*args, **kwargs))
 
-    return dec
+    return make_coroutine
 
 
 def run_async(coroutine):
