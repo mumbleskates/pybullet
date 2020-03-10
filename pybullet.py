@@ -605,6 +605,7 @@ class Notifier:
         if self.current_notif:
             run_async(self.current_notif.delete())
             self.current_notif = None
+
         # add unsent messages into displaying messages
         to_show = config['displayed_messages']
         if to_show > 0:
@@ -615,6 +616,7 @@ class Notifier:
         self.message_count += self.unsent_count
         del self.unsent[:]
         self.unsent_count = 0
+
         # POST a new notification
         try:
             http_response = await http_request(
@@ -630,20 +632,21 @@ class Notifier:
             debug("Bad error while posting push: {0}".format(ex))
             return
 
-        if http_response.status_code == 200:
-            try:
-                iden = json.loads(
-                    http_response.body.decode('utf-8')
-                )['iden']
-                debug("Got new iden {0}".format(iden))
-                self.current_notif = Notification(notifier=self, iden=iden)
-            except (JSONDecodeError, UnicodeDecodeError, KeyError) as ex:
-                debug("Error reading push creation response: {0}".format(ex))
-        else:
+        if http_response.status_code != 200:
             debug(
                 "Error posting push: status {0}"
                 .format(http_response.status_code)
             )
+            return
+
+        try:
+            iden = json.loads(
+                http_response.body.decode('utf-8')
+            )['iden']
+            debug("Got new iden {0}".format(iden))
+            self.current_notif = Notification(notifier=self, iden=iden)
+        except (JSONDecodeError, UnicodeDecodeError, KeyError) as ex:
+            debug("Error reading push creation response: {0}".format(ex))
 
 
 class Notification:
