@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 from collections import namedtuple
 from datetime import datetime, timedelta
-from functools import wraps
 from itertools import chain, count
 import json
 from json import JSONDecodeError
 import sys
+from types import coroutine
 
 import weechat
 
@@ -282,58 +282,15 @@ async_stash = {}
 http_stash_id_provider = ("request" + str(n) for n in count())
 
 
-class SimpleCoroutine:
-    """
-    Same as a regular generator, but complains when it is GC'd before being
-    completely iterated.
-    """
-
-    def __init__(self, generator):
-        self.generator = generator
-        self.finished = False
-
-    def final_check(self):
-        if not self.finished:
-            debug(
-                "SimpleCoroutine {0} disposed without being completed!"
-                .format(self.generator.__name__)
-            )
-
-    def __next__(self):
-        try:
-            return next(self.generator)
-        except StopIteration as ex:
-            self.finished = True
-            raise ex
-
-    def send(self, value):
-        try:
-            return self.generator.send(value)
-        except StopIteration as ex:
-            self.finished = True
-            raise ex
-
-    def throw(self, error):
-        try:
-            return self.generator.throw(error)
-        except StopIteration as ex:
-            self.finished = True
-            raise ex
+def run_async(coro):
+    """Like loop.call_soon."""
+    send_async(coro, None)
 
 
-def simple_coroutine(generator_fn):
-    """Decorator for wrapping generators in a SimpleCoroutine."""
-
-    @wraps(generator_fn)
-    def make_coroutine(*args, **kwargs):
-        return SimpleCoroutine(generator_fn(*args, **kwargs))
-
-    return make_coroutine
-
-
-def run_async(coroutine):
+def send_async(coro, value):
+    """Sends a value back to the coroutine."""
     try:
-        async_stash[next(coroutine)] = coroutine
+        async_stash[coro.send(value)] = coro
         debug(
             "async stash now has {0} in-flight request(s)"
             .format(len(async_stash))
@@ -342,20 +299,10 @@ def run_async(coroutine):
         pass
 
 
-def send_async(coroutine, value):
+def throw_async(coro, error):
+    """Throws an error in the coroutine."""
     try:
-        async_stash[coroutine.send(value)] = coroutine
-        debug(
-            "async stash now has {0} in-flight request(s)"
-            .format(len(async_stash))
-        )
-    except StopIteration:
-        pass
-
-
-def throw_async(coroutine, error):
-    try:
-        async_stash[coroutine.throw(error)] = coroutine
+        async_stash[coro.throw(error)] = coro
         debug(
             "async stash now has {0} in-flight request(s)"
             .format(len(async_stash))
@@ -371,7 +318,7 @@ class RequestException(Exception):
 # HTTP response.
 #   http_version: str
 #   status_code: int
-#   headers: dict[str, str]
+#   headers: dict[str, list[str]]
 #   body: bytes
 #   stderr: bytes or str
 HttpResponse = namedtuple(
@@ -380,22 +327,17 @@ HttpResponse = namedtuple(
 )
 
 
-@simple_coroutine
+@coroutine
 def http_request(method, url, headers=None, data=None):
-    """Coroutine that returns a response for an HTTP request."""
-    # This is accomplished by registering the hook with weechat, then yielding
-    # the stash id of the request to the top level. Our callback to the hook
-    # will take the coroutine out of the stash by the stash id and send it the
+    """Async function that returns a response for an HTTP request."""
+    # We make async work by registering the hook with weechat, then yielding the
+    # stash id of the request to the top level. Our callback to the hook will
+    # take the coroutine out of the stash by the stash id and send it the
     # response (or an exception).
-    response = yield _http_request_hook(method, url, headers=headers, data=data)
-    return response
-
-
-def _http_request_hook(
-    method, url,
-    headers=None,
-    data=None,
-):
+    #
+    # This has to be a @coroutine-decorated generator function instead of an
+    # async def because we need to directly yield raw values to the top level of
+    # the iterator chain.
     options = {
         'customrequest': method,
         'header': "1",
@@ -428,19 +370,7 @@ def _http_request_hook(
         'http_cb_receiver',
         stash_id,
     )
-    return stash_id
-
-
-def http_cb_receiver(data, command, return_code, stdout, stderr):
-    # data is the stash_id for this request
-    coroutine = async_stash.pop(data)
-    debug("got http response for {0}".format(data))
-    if return_code == weechat.WEECHAT_HOOK_PROCESS_ERROR:
-        throw_async(
-            coroutine,
-            RequestException("Error with command {0}".format(repr(command)))
-        )
-        return weechat.WEECHAT_RC_OK
+    stdout, stderr = yield stash_id
     try:
         # We receive http responses with the response header intact so we
         # can parse out the status etc.
@@ -453,25 +383,32 @@ def http_cb_receiver(data, command, return_code, stdout, stderr):
         http_version, _, status_str = status_line.partition(" ")
         status_code_str, _, status_code_name = status_str.partition(" ")
         status_code = int(status_code_str)
-        header_dict = {
-            field: value.strip()
-            for field, _, value in (
-                line.partition(":") for line in header_lines
-            )
-        }
-        response = HttpResponse(
+        header_dict = {}
+        for line in header_lines:
+            field, _, value = line.partition(":")
+            header_dict.setdefault(field.lower(), []).append(value.strip())
+        return HttpResponse(
             http_version=http_version,
             status_code=status_code,
             headers=header_dict,
             body=body,
             stderr=stderr,
         )
-        send_async(coroutine, response)
     except (UnicodeDecodeError, ValueError) as ex:
+        raise RequestException("bad HTTP header received: {0}".format(ex))
+
+
+def http_cb_receiver(data, command, return_code, stdout, stderr):
+    # data is the stash_id for this request
+    coro = async_stash.pop(data)
+    debug("got http response for {0}".format(data))
+    if return_code == weechat.WEECHAT_HOOK_PROCESS_ERROR:
         throw_async(
-            coroutine,
-            RequestException("bad HTTP header received: {0}".format(ex))
+            coro,
+            RequestException("Error with command {0}".format(repr(command)))
         )
+        return weechat.WEECHAT_RC_OK
+    send_async(coro, (stdout, stderr))
     return weechat.WEECHAT_RC_OK
 
 
@@ -528,8 +465,7 @@ class Notifier:
             result['device_iden'] = config['target_device']
         return result
 
-    @simple_coroutine
-    def add_message(self, show_buffer_name, message):
+    async def add_message(self, show_buffer_name, message):
         """Add a message to this notification and update the push."""
         self.buffer_show = show_buffer_name
 
@@ -554,12 +490,11 @@ class Notifier:
 
         if self.waiting_until:
             if self.current_notif:
-                yield from self.current_notif.check_dismissal()
+                await self.current_notif.check_dismissal()
         else:
-            yield from self.send_notification()
+            await self.send_notification()
 
-    @simple_coroutine
-    def self_talked(self):
+    async def self_talked(self):
         """
         We talked in the buffer; clear notification, reset status, and set last
         talked time.
@@ -580,10 +515,9 @@ class Notifier:
         self.unsent_count = 0
         self.self_last_talked = datetime.utcnow()
         # if we are already waiting, bump the timer until our delay_after_talk
-        yield from self.delay(config['delay_after_talk'])
+        await self.delay(config['delay_after_talk'])
 
-    @simple_coroutine
-    def delay(self, seconds):
+    async def delay(self, seconds):
         """
         Ensure that there is a running timer hook for the time <seconds> from
         now.
@@ -593,10 +527,9 @@ class Notifier:
             self.waiting_until = max(self.waiting_until, after_delay)
         else:
             self.waiting_until = after_delay
-            yield from self.go_wait()
+            await self.go_wait()
 
-    @simple_coroutine
-    def go_wait(self):
+    async def go_wait(self):
         """Set callback hook to wait until our destination time"""
         seconds = (self.waiting_until - datetime.utcnow()).total_seconds()
         # do not wait more than max_poll_delay seconds, and max_poll_delay
@@ -614,10 +547,9 @@ class Notifier:
             )
         else:  # waiting_until already passed, don't wait at all actually
             self.waiting_until = None
-            yield from self.send_notification()
+            await self.send_notification()
 
-    @simple_coroutine
-    def done_waiting(self):
+    async def done_waiting(self):
         """
         Timer has returned at approximately the given time. Only sent from
         callbacks.
@@ -630,24 +562,23 @@ class Notifier:
             # we haven't waited long enough, perhaps the timer was increased
             # or we are capped at max_poll_delay
             if self.current_notif:
-                yield from self.current_notif.check_dismissal()
-            yield from self.go_wait()
+                await self.current_notif.check_dismissal()
+            await self.go_wait()
         else:
             debug("Finished waiting for {0}".format(self.buffer))
             self.waiting_until = None
-            yield from self.send_notification()
+            await self.send_notification()
 
-    @simple_coroutine
-    def send_notification(self):
+    async def send_notification(self):
         """Send an updated notification immediately, if one exists"""
         if self.unsent_count:
             # post the new state
-            yield from self.repost()
+            await self.repost()
             # we just sent a message, introduce a delay before more are sent
             if self.message_count < config['many_messages']:
-                yield from self.delay(config['min_spacing'])
+                await self.delay(config['min_spacing'])
             else:
-                yield from self.delay(config['long_spacing'] + self.bonus_delay)
+                await self.delay(config['long_spacing'] + self.bonus_delay)
                 if config['increase_spacing'] > 0:
                     self.bonus_delay += config['increase_spacing']
 
@@ -660,15 +591,14 @@ class Notifier:
         del self.messages[:]
         self.message_count = 0
 
-    @simple_coroutine
-    def repost(self):
+    async def repost(self):
         """Delete the old push and post a new one"""
         debug("Reposting for {0} from iden {1}".format(
             self.buffer_show,
             self.current_notif and self.current_notif.iden
         ))
         if self.current_notif:
-            yield from self.current_notif.check_dismissal()
+            await self.current_notif.check_dismissal()
 
         if self.current_notif:
             run_async(self.current_notif.delete())
@@ -685,7 +615,7 @@ class Notifier:
         self.unsent_count = 0
         # POST a new notification
         try:
-            http_response = yield from http_request(
+            http_response = await http_request(
                 method='POST',
                 url=BULLET_URL + "pushes",
                 headers={
@@ -725,11 +655,10 @@ class Notification:
         self.notifier = notifier
         self.iden = iden
 
-    @simple_coroutine
-    def check_dismissal(self, always_delete=False):
+    async def check_dismissal(self, always_delete=False):
         """Check if this notification's push was dismissed and reset if so."""
         try:
-            http_response = yield from http_request(
+            http_response = await http_request(
                 method='GET',
                 url=BULLET_URL + "pushes/{0}".format(self.iden),
                 headers={'Access-Token': config['api_secret']},
@@ -765,11 +694,10 @@ class Notification:
                 .format(http_response.status_code)
             )
 
-    @simple_coroutine
-    def delete(self):
+    async def delete(self):
         """Delete this notification's push."""
         try:
-            http_response = yield from http_request(
+            http_response = await http_request(
                 method='DELETE',
                 url=BULLET_URL + "pushes/{0}".format(self.iden),
                 headers={'Access-Token': config['api_secret']},
@@ -786,8 +714,7 @@ class Notification:
             )
 
 
-@simple_coroutine
-def dispatch_notification(buffer_ptr, buffer_name, prefix, message):
+async def dispatch_notification(buffer_ptr, buffer_name, prefix, message):
     """Send a notification for a buffer"""
     if config['short_buffer_name']:
         show_buffer_name = weechat.buffer_get_string(buffer_ptr, 'short_name')
@@ -796,16 +723,15 @@ def dispatch_notification(buffer_ptr, buffer_name, prefix, message):
 
     debug("Dispatching notification for {0}".format(buffer_name))
     # send the notification
-    yield from Notifier.get_for_buffer(buffer_name).add_message(
+    await Notifier.get_for_buffer(buffer_name).add_message(
         show_buffer_name,
         "<{0}> {1}".format(prefix, message)
     )
 
 
-@simple_coroutine
-def dispatch_self_talked(buffer_name):
+async def dispatch_self_talked(buffer_name):
     """Self talked in the buffer, mark and clear status"""
-    yield from Notifier.get_for_buffer(buffer_name).self_talked()
+    await Notifier.get_for_buffer(buffer_name).self_talked()
 
 
 # Heuristics #
