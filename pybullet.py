@@ -12,14 +12,16 @@ import weechat
 
 # Constants #
 
-LICENSE = "MIT"
+__license__ = "MIT"
 
 NAME = "pybullet"
-VERSION = 0.4
-AUTHOR = "Kent Ross"
+__version__ = '0.4'
+__author__ = "Kent Ross"
+__email__ = "k@mad.cash"
+__maintainer__ = __author__
 __doc__ = (
     "{0} {1}: Push smart notifications to pushbullet. Authored by {2}"
-    .format(NAME, VERSION, AUTHOR)
+    .format(NAME, __version__, __author__)
 )
 
 BULLET_URL = "https://api.pushbullet.com/v2/"
@@ -833,9 +835,9 @@ def done_waiting_cb(data, remaining_calls):
 if __name__ == '__main__':
     weechat.register(
         NAME,
-        AUTHOR,
-        str(VERSION),
-        LICENSE,
+        __author__,
+        __version__,
+        __license__,
         __doc__,                            # description
         "",                                 # shutdown_function
         ""                                  # charset, default utf-8
