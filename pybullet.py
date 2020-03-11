@@ -27,7 +27,7 @@ __doc__ = (
 BULLET_URL = "https://api.pushbullet.com/v2/"
 CONFIG_NAMESPACE = "plugins.var.python.{0}.".format(NAME)
 
-TIMER_GRACE = timedelta(seconds=1)
+TIMER_GRACE = timedelta(seconds=0.5)
 # minimum effective value for max_poll_delay: never force polling faster than
 # this
 MIN_POLL_DELAY = 20
@@ -490,10 +490,7 @@ class Notifier:
         # update count of messages
         self.unsent_count += 1
 
-        if self.waiting_until:
-            if self.current_notif:
-                await self.current_notif.check_dismissal()
-        else:
+        if not self.waiting_until:
             await self.send_notification()
 
     async def self_talked(self):
@@ -506,13 +503,7 @@ class Notifier:
         self.current_notif = None
         # fully reset the state of the notifier now that we are all up to date
         # on this channel
-        self.reset_seen()
-        if self.wait_hook is not None:
-            debug("Unhooking wait for {0}".format(self.buffer))
-            weechat.unhook(self.wait_hook)
-            self.wait_hook = None
-        self.waiting_until = None
-        self.bonus_delay = 0
+        self.mark_sent_as_seen()
         del self.unsent[:]
         self.unsent_count = 0
         self.self_last_talked = datetime.utcnow()
@@ -526,6 +517,7 @@ class Notifier:
         """
         after_delay = datetime.utcnow() + timedelta(seconds=seconds)
         if self.waiting_until:
+            # maybe wait longer if we are already waiting
             self.waiting_until = max(self.waiting_until, after_delay)
         else:
             self.waiting_until = after_delay
@@ -565,7 +557,13 @@ class Notifier:
             # or we are capped at max_poll_delay
             if self.current_notif:
                 await self.current_notif.check_dismissal()
-            await self.go_wait()
+            # dismissal may cancel waits, so check again
+            if self.waiting_until:
+                # still waiting
+                await self.go_wait()
+            else:
+                # notification was dismissed and we were reset
+                await self.send_notification()
         else:
             debug("Finished waiting for {0}".format(self.buffer))
             self.waiting_until = None
@@ -573,38 +571,29 @@ class Notifier:
 
     async def send_notification(self):
         """Send an updated notification immediately, if one exists"""
-        if self.unsent_count:
-            # post the new state
-            await self.repost()
-            # we just sent a message, introduce a delay before more are sent
-            if self.message_count < config['many_messages']:
-                await self.delay(config['min_spacing'])
-            else:
-                await self.delay(config['long_spacing'] + self.bonus_delay)
-                if config['increase_spacing'] > 0:
-                    self.bonus_delay += config['increase_spacing']
-
-    def reset_seen(self):
-        """
-        Reset the state of this notifier as we have at least seen posted
-        notifications.
-        """
-        # cancel any current wait
-        del self.messages[:]
-        self.message_count = 0
-
-    async def repost(self):
-        """Delete the old push and post a new one"""
-        debug("Reposting for {0} from iden {1}".format(
-            self.buffer_show,
-            self.current_notif and self.current_notif.iden
-        ))
         if self.current_notif:
             await self.current_notif.check_dismissal()
 
         if self.current_notif:
             run_async(self.current_notif.delete())
             self.current_notif = None
+
+        if not self.unsent_count:
+            return  # nothing to send
+
+        # we are sending a message, introduce a delay before more are sent
+        if self.message_count < config['many_messages']:
+            await self.delay(config['min_spacing'])
+        else:
+            await self.delay(config['long_spacing'] + self.bonus_delay)
+            if config['increase_spacing'] > 0:
+                self.bonus_delay += config['increase_spacing']
+
+        # delete the old notif and post a new one
+        debug("Reposting for {0} from iden {1}".format(
+            self.buffer_show,
+            self.current_notif and self.current_notif.iden
+        ))
 
         # add unsent messages into displaying messages
         to_show = config['displayed_messages']
@@ -648,6 +637,22 @@ class Notifier:
         except (JSONDecodeError, UnicodeDecodeError, KeyError) as ex:
             debug("Error reading push creation response: {0}".format(ex))
 
+    def mark_sent_as_seen(self):
+        """
+        Reset the state of this notifier as we have at least seen posted
+        notifications.
+        """
+        # cancel any current wait and reset timers
+        if self.wait_hook is not None:
+            debug("Unhooking wait for {0}".format(self.buffer))
+            weechat.unhook(self.wait_hook)
+            self.wait_hook = None
+        self.waiting_until = None
+        self.bonus_delay = 0
+        # delete sent messages
+        del self.messages[:]
+        self.message_count = 0
+
 
 class Notification:
     """
@@ -688,9 +693,9 @@ class Notification:
                     )
                     if always_delete or config['delete_dismissed']:
                         run_async(self.delete())
-                    self.notifier.reset_seen()
                     if self.notifier.current_notif is self:
                         self.notifier.current_notif = None
+                    self.notifier.mark_sent_as_seen()
             except (JSONDecodeError, UnicodeDecodeError, KeyError) as ex:
                 debug("Error while reading push info: {0}".format(ex))
         else:
