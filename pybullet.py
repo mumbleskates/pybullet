@@ -433,6 +433,7 @@ class Notifier:
         self.wait_hook = None       # hook_timer hook id for our current wait
         self.bonus_delay = 0  # total extra delay accrued between notifications
         self.self_last_talked = datetime.min  # last time we talked in the buff
+        self.currently_sending = False  # if we are sending a notif right now
 
     @staticmethod
     def get_for_buffer(buffer_name):
@@ -578,7 +579,22 @@ class Notifier:
             await self.send_notification()
 
     async def send_notification(self):
-        """Send an updated notification immediately, if one exists"""
+        """Send an updated notification immediately, if one exists."""
+        # Guard the real method against running concurrently.
+        # This protects us from cases where a new message is dispatched after
+        # we have started checking the dismissal status of our existing notif,
+        # but before we have decided how long we are going to wait for the next
+        # check after posting a new notif. These cases don't seem to do any
+        # damage, but they might send a bunch of unnecessary requests.
+        if self.currently_sending:
+            return
+        try:
+            self.currently_sending = True
+            await self._send_notification_unguarded()
+        finally:
+            self.currently_sending = False
+
+    async def _send_notification_unguarded(self):
         if self.current_notif:
             await self.current_notif.check_dismissal()
 
