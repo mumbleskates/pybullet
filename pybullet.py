@@ -500,8 +500,8 @@ class Notifier:
         talked time.
         """
         if self.current_notif:
-            run_async(self.current_notif.delete())
-        self.current_notif = None
+            self.current_notif.delete_soon()
+            self.current_notif = None
         # fully reset the state of the notifier now that we are all up to date
         # on this channel
         self.mark_sent_as_seen()
@@ -564,15 +564,13 @@ class Notifier:
         ):
             # we haven't waited long enough, perhaps the timer was increased
             # or we are capped at max_poll_delay
-            if self.current_notif:
-                await self.current_notif.check_dismissal()
-            # dismissal may cancel waits, so check again
-            if self.waiting_until:
+            if await self.check_dismissal():
+                # notification was dismissed
+                self.mark_sent_as_seen()
+                await self.send_notification()
+            else:
                 # still waiting
                 await self.go_wait()
-            else:
-                # notification was dismissed and we were reset
-                await self.send_notification()
         else:
             debug("Finished waiting for {0}".format(self.buffer))
             self.waiting_until = None
@@ -595,8 +593,8 @@ class Notifier:
             self.currently_sending = False
 
     async def _send_notification_unguarded(self):
-        if self.current_notif:
-            await self.current_notif.check_dismissal()
+        if await self.check_dismissal():
+            self.mark_sent_as_seen()
 
         if not self.unsent_count:
             return  # nothing to send
@@ -608,7 +606,7 @@ class Notifier:
         ))
 
         if self.current_notif:
-            run_async(self.current_notif.delete())
+            self.current_notif.delete_soon()
             self.current_notif = None
 
         # add unsent messages into displaying messages
@@ -657,7 +655,7 @@ class Notifier:
                 http_response.body.decode('utf-8')
             )['iden']
             debug("Got new iden {0}".format(iden))
-            self.current_notif = Notification(notifier=self, iden=iden)
+            self.current_notif = Notification(iden=iden)
         except (JSONDecodeError, UnicodeDecodeError, KeyError) as ex:
             debug("Error reading push creation response: {0}".format(ex))
 
@@ -677,6 +675,27 @@ class Notifier:
         del self.messages[:]
         self.message_count = 0
 
+    async def check_dismissal(self):
+        """
+        Polls the current notif if it exists and returns True if it's dismissed.
+        
+        Dismissed notifications are deleted if so configured and are always
+        forgotten by the notifier.
+        """
+        notif = self.current_notif
+        if notif:
+            if await notif.is_dismissed():
+                debug(
+                    "Push {0} for {1} was dismissed"
+                    .format(notif.iden, self.buffer_show)
+                )
+                if config['delete_dismissed']:
+                    notif.delete_soon()
+                if notif is self.current_notif:
+                    self.current_notif = None
+        else:
+            return False
+
 
 class Notification:
     """
@@ -685,48 +704,39 @@ class Notification:
     the iden of this notification never changes.
     """
 
-    def __init__(self, notifier, iden):
-        self.notifier = notifier
+    def __init__(self, iden):
         self.iden = iden
 
-    async def check_dismissal(self, always_delete=False):
-        """Check if this notification's push was dismissed and reset if so."""
+    async def is_dismissed(self):
+        """
+        Check if this notification's push was dismissed, returning True if it
+        was.
+        """
         try:
             http_response = await http_request(
                 method='GET',
                 url=BULLET_URL + "pushes/{0}".format(self.iden),
                 headers={'Access-Token': config['api_secret']},
             )
+            if http_response.status_code != 200:
+                debug(
+                    "Error while getting push info: status {0}"
+                    .format(http_response.status_code)
+                )
+                return None
+            return json.loads(http_response.body.decode('utf-8'))['dismissed']
         except RequestException as ex:
             debug(
                 "Bad error while getting pushes/{0}: {1}"
                 .format(self.iden, ex)
             )
-            return
+        except (JSONDecodeError, UnicodeDecodeError, KeyError) as ex:
+            debug("Error while reading push info: {0}".format(ex))
+        return None
 
-        if http_response.status_code == 200:
-            try:
-                if json.loads(http_response.body.decode('utf-8'))['dismissed']:
-                    # dismissed notifications are deleted only if configured,
-                    # but we forget about them even if they are not deleted,
-                    # and we mark their messages as seen when they are found to
-                    # be dismissed.
-                    debug(
-                        "Push {0} for {1} was dismissed"
-                        .format(self.iden, self.notifier.buffer_show)
-                    )
-                    if always_delete or config['delete_dismissed']:
-                        run_async(self.delete())
-                    if self.notifier.current_notif is self:
-                        self.notifier.current_notif = None
-                    self.notifier.mark_sent_as_seen()
-            except (JSONDecodeError, UnicodeDecodeError, KeyError) as ex:
-                debug("Error while reading push info: {0}".format(ex))
-        else:
-            debug(
-                "Error while getting push info: status {0}"
-                .format(http_response.status_code)
-            )
+    def delete_soon(self):
+        """Schedule this notif to be deleted asap."""
+        run_async(self.delete())
 
     async def delete(self):
         """Delete this notification's push."""
