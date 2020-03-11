@@ -582,12 +582,12 @@ class Notifier:
         if self.current_notif:
             await self.current_notif.check_dismissal()
 
+        if not self.unsent_count:
+            return  # nothing to send
+
         if self.current_notif:
             run_async(self.current_notif.delete())
             self.current_notif = None
-
-        if not self.unsent_count:
-            return  # nothing to send
 
         # we are sending a message, introduce a delay before more are sent
         if self.message_count < config['many_messages']:
