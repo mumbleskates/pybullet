@@ -569,7 +569,7 @@ class Notifier:
                 self.mark_sent_as_seen()
                 await self.send_notification()
             else:
-                # still waiting
+                # not dismissed, and still waiting
                 await self.go_wait()
         else:
             debug("Finished waiting for {0}".format(self.buffer))
@@ -693,6 +693,9 @@ class Notifier:
                     notif.delete_soon()
                 if notif is self.current_notif:
                     self.current_notif = None
+                return True
+            else:
+                return False
         else:
             return False
 
