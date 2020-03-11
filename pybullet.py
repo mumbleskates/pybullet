@@ -585,23 +585,15 @@ class Notifier:
         if not self.unsent_count:
             return  # nothing to send
 
-        if self.current_notif:
-            run_async(self.current_notif.delete())
-            self.current_notif = None
-
-        # we are sending a message, introduce a delay before more are sent
-        if self.message_count < config['many_messages']:
-            await self.delay(config['min_spacing'])
-        else:
-            await self.delay(config['long_spacing'] + self.bonus_delay)
-            if config['increase_spacing'] > 0:
-                self.bonus_delay += config['increase_spacing']
-
         # delete the old notif and post a new one
         debug("Reposting for {0} from iden {1}".format(
             self.buffer_show,
-            self.current_notif and self.current_notif.iden
+            self.current_notif and repr(self.current_notif.iden)
         ))
+
+        if self.current_notif:
+            run_async(self.current_notif.delete())
+            self.current_notif = None
 
         # add unsent messages into displaying messages
         to_show = config['displayed_messages']
@@ -613,6 +605,14 @@ class Notifier:
         self.message_count += self.unsent_count
         del self.unsent[:]
         self.unsent_count = 0
+
+        # we are sending a message, introduce a delay before more are sent
+        if self.message_count < config['many_messages']:
+            await self.delay(config['min_spacing'])
+        else:
+            await self.delay(config['long_spacing'] + self.bonus_delay)
+            if config['increase_spacing'] > 0:
+                self.bonus_delay += config['increase_spacing']
 
         # POST a new notification
         try:
