@@ -559,7 +559,7 @@ class Notifier:
         self.wait_hook = None  # done with this
         if (
             self.waiting_until
-            and datetime.utcnow() > self.waiting_until + TIMER_GRACE
+            and self.waiting_until > datetime.utcnow() + TIMER_GRACE
         ):
             # we haven't waited long enough, perhaps the timer was increased
             # or we are capped at max_poll_delay
