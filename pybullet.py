@@ -525,13 +525,21 @@ class Notifier:
 
     async def go_wait(self):
         """Set callback hook to wait until our destination time"""
-        seconds = (self.waiting_until - datetime.utcnow()).total_seconds()
+        full_seconds = (self.waiting_until - datetime.utcnow()).total_seconds()
         # do not wait more than max_poll_delay seconds, and max_poll_delay
         # cannot be less than MIN_POLL_DELAY
-        if config['max_poll_delay'] > MIN_POLL_DELAY:
-            seconds = min(seconds, config['max_poll_delay'])
-        debug("Waiting {0} seconds for {1}".format(seconds, self.buffer))
+        seconds = min(
+            full_seconds,
+            max(config['max_poll_delay'], MIN_POLL_DELAY)
+        )
         if seconds > 0:
+            debug(
+                (
+                    "Waiting all {0} seconds for {2}"
+                    if seconds == full_seconds else
+                    "Waiting {0} out of {1} seconds for {2}"
+                ).format(seconds, full_seconds, self.buffer)
+            )
             self.wait_hook = weechat.hook_timer(
                 int(seconds * 1000),    # interval to wait in milliseconds
                 0,                      # seconds alignment
