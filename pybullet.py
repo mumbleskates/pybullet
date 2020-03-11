@@ -901,6 +901,6 @@ if __name__ == '__main__':
 
     weechat.prnt(
         "", "{0}: loaded and running. Debug is {1}"
-        .format(NAME, config_as_str(config['debug']), repr(sys.version))
+        .format(NAME, config_as_str(config['debug']))
     )
     debug("Python version is {0}".format(repr(sys.version)))
