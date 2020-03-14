@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from collections import namedtuple
+from collections import deque, namedtuple
 from datetime import datetime, timedelta
 from itertools import chain, count
 import json
@@ -279,14 +279,27 @@ def config_cb(data, option, value):
 
 # Async #
 
-# http request data, a dict of {stash_id: coroutine}
+async_call_queue = deque()
+# async callback association, a dict of {stash_id: coroutine}
 async_stash = {}
-http_stash_id_provider = ("request" + str(n) for n in count())
+http_stash_id_provider = ("http" + str(n) for n in count())
+wait_stash_id_provider = ("wait" + str(n) for n in count())
 
 
-def run_async(coro):
-    """Like loop.call_soon."""
-    send_async(coro, None)
+def run_async(coro=None):
+    """Begin running the given coroutine, plus any others enqueued."""
+    if coro is not None:
+        call_soon_async(coro)
+    while async_call_queue:
+        send_async(async_call_queue.popleft(), None)
+
+
+def call_soon_async(coro):
+    """
+    Like loop.call_soon. Enqueues the given coroutine to be run, but does not
+    start it yet.
+    """
+    async_call_queue.append(coro)
 
 
 def send_async(coro, value):
@@ -294,7 +307,7 @@ def send_async(coro, value):
     try:
         async_stash[coro.send(value)] = coro
         debug(
-            "async stash now has {0} in-flight request(s)"
+            "async stash now has {0} in-flight callback(s)"
             .format(len(async_stash))
         )
     except StopIteration:
@@ -306,12 +319,36 @@ def throw_async(coro, error):
     try:
         async_stash[coro.throw(error)] = coro
         debug(
-            "async stash now has {0} in-flight request(s)"
+            "async stash now has {0} in-flight callback(s)"
             .format(len(async_stash))
         )
     except StopIteration:
         pass
 
+
+# Waits #
+
+class WaitCanceled(Exception):
+    pass
+
+
+def cancel_wait(stash_id):
+    """Send a wait cancelation."""
+    try:
+        throw_async(async_stash.pop(stash_id), WaitCanceled())
+    except WaitCanceled:
+        pass
+
+
+# inspector doesn't like unused parameters
+# noinspection PyUnusedLocal
+def done_waiting_cb(data, remaining_calls):
+    """Callback for hook_timer; callback data is the stash_id of the wait."""
+    run_async(async_stash.pop(data))
+    return weechat.WEECHAT_RC_OK
+
+
+# Http requests #
 
 class RequestException(Exception):
     pass
@@ -429,8 +466,8 @@ class Notifier:
         self.unsent = []            # list of unsent messages (w/ no notif sent)
         self.unsent_count = 0       # number of unsent messages
         self.current_notif = None   # current push notification
-        self.waiting_until = None   # whether we are delaying before sending
-        self.wait_hook = None       # hook_timer hook id for our current wait
+        self.waiting_until = None   # datetime we are waiting until, if waiting
+        self.wait_id = None         # stash_id for our current wait, if any
         self.bonus_delay = 0  # total extra delay accrued between notifications
         self.self_last_talked = datetime.min  # last time we talked in the buff
         self.currently_sending = False  # if we are sending a notif right now
@@ -442,6 +479,14 @@ class Notifier:
             note = Notifier(buffer_name)
             Notifier.by_buffer[buffer_name] = note
         return note
+
+    def has_unsent(self):
+        """Returns True if there are updates waiting to be sent."""
+        return self.unsent_count > 0
+
+    def is_waiting(self):
+        """Returns True if a wait loop is already running"""
+        return self.waiting_until is not None
 
     def notification_text(self):
         return "\n".join(chain(
@@ -491,7 +536,7 @@ class Notifier:
         # update count of messages
         self.unsent_count += 1
 
-        if not self.waiting_until:
+        if not self.is_waiting():
             await self.send_notification()
 
     async def self_talked(self):
@@ -509,72 +554,75 @@ class Notifier:
         self.unsent_count = 0
         self.self_last_talked = datetime.utcnow()
         # if we are already waiting, bump the timer until our delay_after_talk
-        await self.delay(config['delay_after_talk'])
+        self.set_delay(config['delay_after_talk'])
 
-    async def delay(self, seconds):
+    def set_delay(self, seconds):
         """
         Ensure that there is a running timer hook for the time <seconds> from
-        now.
+        now, and begin a wait loop if none is running.
         """
         after_delay = datetime.utcnow() + timedelta(seconds=seconds)
-        if self.waiting_until:
+        if self.is_waiting():
             # maybe wait longer if we are already waiting
             self.waiting_until = max(self.waiting_until, after_delay)
         else:
             self.waiting_until = after_delay
-            await self.go_wait()
+            run_async(self.wait_loop())
 
-    async def go_wait(self):
-        """Set callback hook to wait until our destination time"""
-        full_seconds = (self.waiting_until - datetime.utcnow()).total_seconds()
-        # do not wait more than max_poll_delay seconds, and max_poll_delay
-        # cannot be less than MIN_POLL_DELAY
-        seconds = min(
-            full_seconds,
-            max(config['max_poll_delay'], MIN_POLL_DELAY)
+    @coroutine
+    def wait(self, seconds):
+        """
+        Set callback hook and wait for the given number of seconds.
+
+        If the wait is canceled prematurely, raises a WaitCanceled exception.
+        """
+        stash_id = next(wait_stash_id_provider)
+        self.wait_id = stash_id  # store the stash id so we can cancel
+        wait_hook = weechat.hook_timer(
+            int(seconds * 1000),  # interval to wait in milliseconds
+            0,  # seconds alignment
+            1,  # max calls
+            'done_waiting_cb',  # callback name
+            stash_id,  # callback data
         )
-        if seconds > 0:
-            debug(
-                (
-                    "Waiting all {0} seconds for {2}"
-                    if seconds == full_seconds else
-                    "Waiting {0} out of {1} seconds for {2}"
-                ).format(seconds, full_seconds, self.buffer)
-            )
-            self.wait_hook = weechat.hook_timer(
-                int(seconds * 1000),    # interval to wait in milliseconds
-                0,                      # seconds alignment
-                1,                      # max calls
-                'done_waiting_cb',      # callback name
-                self.buffer             # callback data
-            )
-        else:  # waiting_until already passed, don't wait at all actually
-            self.waiting_until = None
-            await self.send_notification()
+        try:
+            yield stash_id
+        except WaitCanceled:
+            weechat.unhook(wait_hook)
+            raise
+        finally:
+            self.wait_id = None
 
-    async def done_waiting(self):
-        """
-        Timer has returned at approximately the given time. Only sent from
-        callbacks.
-        """
-        self.wait_hook = None  # done with this
-        if (
-            self.waiting_until
-            and self.waiting_until > datetime.utcnow() + TIMER_GRACE
-        ):
-            # we haven't waited long enough, perhaps the timer was increased
-            # or we are capped at max_poll_delay
-            if await self.check_dismissal():
-                # notification was dismissed
-                self.mark_sent_as_seen()
-                await self.send_notification()
-            else:
-                # not dismissed, and still waiting
-                await self.go_wait()
-        else:
-            debug("Finished waiting for {0}".format(self.buffer))
-            self.waiting_until = None
-            await self.send_notification()
+    async def wait_loop(self):
+        while True:
+            # waiting_until may change every loop, so always recalculate
+            remaining_wait_time = self.waiting_until - datetime.utcnow()
+            if remaining_wait_time > TIMER_GRACE:
+                # do not wait more than max_poll_delay seconds at a time, and
+                # max_poll_delay cannot be less than MIN_POLL_DELAY
+                full_seconds = remaining_wait_time.total_seconds()
+                seconds = min(
+                    full_seconds,
+                    max(config['max_poll_delay'], MIN_POLL_DELAY)
+                )
+                debug(
+                    (
+                        "Waiting all {0} seconds for {2}"
+                        if seconds == full_seconds else
+                        "Waiting {0} out of {1} seconds for {2}"
+                    ).format(seconds, full_seconds, self.buffer)
+                )
+                await self.wait(seconds)
+                # Check on notif dismissal if we have anything to send
+                if self.has_unsent() and await self.check_dismissal():
+                    break  # notif was dismissed!
+            else:  # waiting_until already passed, don't wait at all actually
+                debug("Finished waiting for {0}".format(self.buffer))
+                break
+
+        self.waiting_until = None
+        # When we have finished waiting, send any notification we have
+        await self.send_notification()
 
     async def send_notification(self):
         """Send an updated notification immediately, if one exists."""
@@ -593,11 +641,11 @@ class Notifier:
             self.currently_sending = False
 
     async def _send_notification_unguarded(self):
-        if await self.check_dismissal():
-            self.mark_sent_as_seen()
-
         if not self.unsent_count:
             return  # nothing to send
+
+        if await self.check_dismissal():
+            self.mark_sent_as_seen()
 
         # delete the old notif and post a new one
         debug("Reposting for {0} from iden {1}".format(
@@ -622,9 +670,9 @@ class Notifier:
 
         # we are sending a message, introduce a delay before more are sent
         if self.message_count < config['many_messages']:
-            await self.delay(config['min_spacing'])
+            self.set_delay(config['min_spacing'])
         else:
-            await self.delay(config['long_spacing'] + self.bonus_delay)
+            self.set_delay(config['long_spacing'] + self.bonus_delay)
             if config['increase_spacing'] > 0:
                 self.bonus_delay += config['increase_spacing']
 
@@ -665,11 +713,10 @@ class Notifier:
         notifications.
         """
         # cancel any current wait and reset timers
-        if self.wait_hook is not None:
-            debug("Unhooking wait for {0}".format(self.buffer))
-            weechat.unhook(self.wait_hook)
-            self.wait_hook = None
-        self.waiting_until = None
+        if self.is_waiting():
+            debug("Canceling wait for {0}".format(self.buffer))
+            cancel_wait(self.wait_id)
+            self.waiting_until = None
         self.bonus_delay = 0
         # delete sent messages
         del self.messages[:]
@@ -689,6 +736,7 @@ class Notifier:
                     "Push {0} for {1} was dismissed"
                     .format(notif.iden, self.buffer_show)
                 )
+                self.mark_sent_as_seen()
                 if config['delete_dismissed']:
                     notif.delete_soon()
                 if notif is self.current_notif:
@@ -810,7 +858,7 @@ def detect_highlight_spam(buffer_ptr, message):
     return False
 
 
-# Core callbacks #
+# Core callback #
 
 # inspector doesn't like unused parameters
 # noinspection PyUnusedLocal
@@ -866,14 +914,6 @@ def print_cb(
             dispatch_notification(buffer_ptr, buffer_name, prefix, message)
         )
 
-    return weechat.WEECHAT_RC_OK
-
-
-# inspector doesn't like unused parameters
-# noinspection PyUnusedLocal
-def done_waiting_cb(data, remaining_calls):
-    """Callback for hook_timer; data will be set to the name of the buffer"""
-    run_async(Notifier.get_for_buffer(data).done_waiting())
     return weechat.WEECHAT_RC_OK
 
 
