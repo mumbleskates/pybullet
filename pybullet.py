@@ -713,10 +713,10 @@ class Notifier:
         notifications.
         """
         # cancel any current wait and reset timers
-        if self.is_waiting():
+        if self.wait_id is not None:
             debug("Canceling wait for {0}".format(self.buffer))
             cancel_wait(self.wait_id)
-            self.waiting_until = None
+        self.waiting_until = None
         self.bonus_delay = 0
         # delete sent messages
         del self.messages[:]
