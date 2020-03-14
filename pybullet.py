@@ -578,6 +578,7 @@ class Notifier:
         """
         stash_id = next(wait_stash_id_provider)
         self.wait_id = stash_id  # store the stash id so we can cancel
+        debug("beginning {0}".format(stash_id))
         wait_hook = weechat.hook_timer(
             int(seconds * 1000),  # interval to wait in milliseconds
             0,  # seconds alignment
@@ -587,8 +588,10 @@ class Notifier:
         )
         try:
             yield stash_id
+            debug("{0} completed".format(stash_id))
         except WaitCanceled:
             weechat.unhook(wait_hook)
+            debug("{0} unhooked".format(stash_id))
             raise
         finally:
             self.wait_id = None
