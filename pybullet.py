@@ -812,6 +812,28 @@ class Notification:
             )
 
 
+def safe_str(s):
+    """
+    Accepts a bytes or str and returns a str. Weechat will return str types
+    unless the string is not valid utf08, in which case it returns bytes. In
+    this case we just fall back to latin1, which is guaranteed to work.
+    """
+    if isinstance(s, str):
+        return s
+    elif isinstance(s, bytes):
+        return s.decode('latin1')
+    raise TypeError("unknown string type {0}".format(type(s)))
+
+
+def safe_bytes(s):
+    """Accepts a bytes or str and returns the utf-8 bytes if it's a str."""
+    if isinstance(s, str):
+        return s.encode('utf-8')
+    elif isinstance(s, bytes):
+        return s
+    raise TypeError("unknown string type {0}".format(type(s)))
+
+
 async def dispatch_notification(buffer_ptr, buffer_name, prefix, message):
     """Send a notification for a buffer"""
     if config['short_buffer_name']:
@@ -822,8 +844,8 @@ async def dispatch_notification(buffer_ptr, buffer_name, prefix, message):
     debug("Dispatching notification for {0}".format(buffer_name))
     # send the notification
     await Notifier.get_for_buffer(buffer_name).add_message(
-        show_buffer_name,
-        "<{0}> {1}".format(prefix, message)
+        safe_str(show_buffer_name),
+        "<{0}> {1}".format(safe_str(prefix), safe_str(message))
     )
 
 
@@ -845,9 +867,10 @@ def detect_highlight_spam(buffer_ptr, message):
     checked = set()
 
     # extract words to check from message
-    words = message.split()
+    # this should work even if message is non-utf8 bytes.
     if not weechat.buffer_get_integer(buffer_ptr, 'nicklist_case_sensitive'):
-        words = map(str.lower, words)
+        message = weechat.string_tolower(message)
+    words = message.split()
 
     for word in words:
         if word in checked:
@@ -892,9 +915,9 @@ def print_cb(
     # sent by me: clear and delay more messages
     # messages sent by you will have the tag "nick_?" with your localvar nick.
     # Prefix is unreliable as it may include mode indicator symbols.
-    tags = tags.split(",")
-    my_nick = weechat.buffer_get_string(buffer_ptr, 'localvar_nick')
-    if "nick_{0}".format(my_nick) in tags:
+    tags = safe_bytes(tags).split(b",")
+    my_nick = safe_bytes(weechat.buffer_get_string(buffer_ptr, 'localvar_nick'))
+    if (b"nick_" + my_nick) in tags:
         debug("Dispatching self talked for {0}".format(buffer_name))
         run_async(dispatch_self_talked(buffer_name))
 
