@@ -869,7 +869,7 @@ def detect_highlight_spam(buffer_ptr, message):
     # extract words to check from message
     # this should work even if message is non-utf8 bytes.
     if not weechat.buffer_get_integer(buffer_ptr, 'nicklist_case_sensitive'):
-        message = weechat.string_tolower(message)
+        message = message.lower()
     words = message.split()
 
     for word in words:
