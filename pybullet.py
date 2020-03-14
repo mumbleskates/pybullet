@@ -440,7 +440,7 @@ def http_request(method, url, headers=None, data=None):
 def http_cb_receiver(data, command, return_code, stdout, stderr):
     # data is the stash_id for this request
     coro = async_stash.pop(data)
-    debug("got http response for {0}".format(data))
+    debug("got response for {0}".format(data))
     if return_code == weechat.WEECHAT_HOOK_PROCESS_ERROR:
         throw_async(
             coro,
