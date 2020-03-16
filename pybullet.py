@@ -15,7 +15,7 @@ import weechat
 __license__ = "MIT"
 
 NAME = "pybullet"
-__version__ = '0.4'
+__version__ = '0.5'
 __author__ = "Kent Ross"
 __email__ = "k@mad.cash"
 __maintainer__ = __author__
