@@ -34,6 +34,28 @@ MIN_POLL_DELAY = 20
 HTTP_TIMEOUT = 30 * 1000  # milliseconds
 
 
+def safe_str(s):
+    """
+    Accepts a bytes or str and returns a str. Weechat will return str types
+    unless the string is not valid utf-8, in which case it returns bytes. In
+    this case we just fall back to latin1, which is guaranteed to work.
+    """
+    if isinstance(s, str):
+        return s
+    elif isinstance(s, bytes):
+        return s.decode('latin1')
+    raise TypeError("unknown string type {0}".format(type(s)))
+
+
+def safe_bytes(s):
+    """Accepts a bytes or str and returns the utf-8 bytes if it's a str."""
+    if isinstance(s, str):
+        return s.encode('utf-8')
+    elif isinstance(s, bytes):
+        return s
+    raise TypeError("unknown string type {0}".format(type(s)))
+
+
 # Configuration #
 
 def debug(text):
@@ -359,7 +381,7 @@ class RequestException(Exception):
 #   status_code: int
 #   headers: dict[str, list[str]]
 #   body: bytes
-#   stderr: bytes or str
+#   stderr: bytes
 HttpResponse = namedtuple(
     'HttpResponse',
     'http_version status_code headers body stderr'
@@ -387,18 +409,9 @@ def http_request(method, url, headers=None, data=None):
             for k, v in headers.items()
         )
     if data is not None:
-        if isinstance(data, str):
-            data_bytes = data.encode('utf-8')
-        elif isinstance(data, bytes):
-            data_bytes = data
-        elif isinstance(data, (list, dict)):
-            data_bytes = json.dumps(data).encode('utf-8')
-        else:
-            raise ValueError(
-                "Bad type {0} passed to http_request data param"
-                .format(type(data))
-            )
-        options['copypostfields'] = data_bytes
+        if isinstance(data, (list, dict)):
+            data = json.dumps(data).encode('utf-8')
+        options['copypostfields'] = safe_bytes(data)
 
     stash_id = next(http_stash_id_provider)
     debug("sending {0}: {1} {2}".format(stash_id, method, repr(url)))
@@ -413,9 +426,7 @@ def http_request(method, url, headers=None, data=None):
     try:
         # We receive http responses with the response header intact so we
         # can parse out the status etc.
-        if isinstance(stdout, str):
-            # weechat returns str unless the content is not valid utf-8.
-            stdout = stdout.encode('utf-8')
+        stdout = safe_bytes(stdout)
         header_bytes, _, body = stdout.partition(b"\r\n\r\n")
         header = header_bytes.decode('ascii')
         [status_line, *header_lines] = header.split("\r\n")
@@ -431,7 +442,7 @@ def http_request(method, url, headers=None, data=None):
             status_code=status_code,
             headers=header_dict,
             body=body,
-            stderr=stderr,
+            stderr=safe_bytes(stderr),
         )
     except (UnicodeDecodeError, ValueError) as ex:
         raise RequestException("bad HTTP header received: {0}".format(ex))
@@ -810,28 +821,6 @@ class Notification:
                 "Bad error while deleting pushes/{0}: {1}"
                 .format(self.iden, ex)
             )
-
-
-def safe_str(s):
-    """
-    Accepts a bytes or str and returns a str. Weechat will return str types
-    unless the string is not valid utf08, in which case it returns bytes. In
-    this case we just fall back to latin1, which is guaranteed to work.
-    """
-    if isinstance(s, str):
-        return s
-    elif isinstance(s, bytes):
-        return s.decode('latin1')
-    raise TypeError("unknown string type {0}".format(type(s)))
-
-
-def safe_bytes(s):
-    """Accepts a bytes or str and returns the utf-8 bytes if it's a str."""
-    if isinstance(s, str):
-        return s.encode('utf-8')
-    elif isinstance(s, bytes):
-        return s
-    raise TypeError("unknown string type {0}".format(type(s)))
 
 
 async def dispatch_notification(buffer_ptr, buffer_name, prefix, message):
