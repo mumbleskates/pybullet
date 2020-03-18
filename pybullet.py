@@ -900,6 +900,7 @@ def print_cb(
         and not weechat.buffer_get_string(buffer_ptr, 'localvar_away')
     ):
         debug("Message for {0} ignored due to away status".format(buffer_name))
+        return weechat.WEECHAT_RC_OK
 
     # sent by me: clear and delay more messages
     # messages sent by you will have the tag "nick_?" with your localvar nick.
