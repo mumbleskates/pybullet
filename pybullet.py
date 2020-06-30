@@ -608,7 +608,7 @@ class Notifier:
             self.wait_id = None
 
     async def wait_loop(self):
-        while True:
+        while self.is_waiting():
             # waiting_until may change every loop, so always recalculate
             remaining_wait_time = self.waiting_until - datetime.utcnow()
             if remaining_wait_time > TIMER_GRACE:
@@ -633,6 +633,8 @@ class Notifier:
             else:  # waiting_until already passed, don't wait at all actually
                 debug("Finished waiting for {0}".format(self.buffer))
                 break
+        else:
+            return  # Not waiting and didn't finish waiting in this loop.
 
         self.waiting_until = None
         # When we have finished waiting, send any notification we have
