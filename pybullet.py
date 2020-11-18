@@ -89,6 +89,8 @@ def config_as_str(value):
     """Convert config defaults to strings for weechat."""
     if isinstance(value, bool):
         return "on" if value else "off"
+    elif isinstance(value, timedelta):
+        return str(int(value.total_seconds()))
     else:
         return str(value)
 
