@@ -30,8 +30,8 @@ CONFIG_NAMESPACE = "plugins.var.python.{0}.".format(NAME)
 TIMER_GRACE = timedelta(seconds=0.5)
 # minimum effective value for max_poll_delay: never force polling faster than
 # this
-MIN_POLL_DELAY = 20
-HTTP_TIMEOUT = 30 * 1000  # milliseconds
+MIN_POLL_DELAY = timedelta(seconds=20)
+HTTP_TIMEOUT = timedelta(seconds=30)
 
 
 def safe_str(s):
@@ -78,6 +78,13 @@ def option_integer(value):
         return 0
 
 
+def option_seconds(value):
+    try:
+        return timedelta(seconds=int(value))
+    except ValueError:
+        return timedelta(0)
+
+
 def config_as_str(value):
     """Convert config defaults to strings for weechat."""
     if isinstance(value, bool):
@@ -92,6 +99,10 @@ def secret_renderer(value):
 
 def boolean_renderer(value):
     return "on" if value else "off"
+
+
+def seconds_renderer(value):
+    return "{0} seconds".format(value.total_seconds())
 
 
 def default_renderer(value):
@@ -162,54 +173,54 @@ config = {
     ),
 
     'ignore_after_talk': (
-        10,
-        option_integer,
-        default_renderer,
+        timedelta(seconds=10),
+        option_seconds,
+        seconds_renderer,
         "For this many seconds after you have talked in a buffer, additional "
         "highlights and PMs will be ignored, assuming you saw them"
     ),
 
     'delay_after_talk': (
-        90,
-        option_integer,
-        default_renderer,
+        timedelta(seconds=90),
+        option_seconds,
+        seconds_renderer,
         "For this many seconds after you last talked in a buffer, "
         "notifications will be delayed. If you talk again before this timer, "
         "no notification will appear"
     ),
 
     'min_spacing': (
-        13,
-        option_integer,
-        default_renderer,
+        timedelta(seconds=13),
+        option_seconds,
+        seconds_renderer,
         "Notifications for a single buffer will never appear closer together "
         "than this many seconds"
     ),
 
     'long_spacing': (
-        200,
-        option_integer,
-        default_renderer,
+        timedelta(seconds=200),
+        option_seconds,
+        seconds_renderer,
         "After many unseen messages in a channel, wait at least this long "
         "before notifying again - see many_messages"
     ),
 
     'increase_spacing': (
-        70,
-        option_integer,
-        default_renderer,
+        timedelta(seconds=70),
+        option_seconds,
+        seconds_renderer,
         "Each time a notification is received on a very busy channel the next "
         "notification will be delayed this many more seconds."
     ),
 
     'max_poll_delay': (
-        90,
-        option_integer,
-        default_renderer,
+        timedelta(seconds=90),
+        option_seconds,
+        seconds_renderer,
         "Be able to notify again at most this many seconds after a "
         "notification has been dismissed. Not a big deal, leave it high. "
         "Minimum {0}"
-        .format(MIN_POLL_DELAY)
+        .format(MIN_POLL_DELAY.total_seconds())
     ),
 
     'many_messages': (
@@ -418,7 +429,7 @@ def http_request(method, url, headers=None, data=None):
     weechat.hook_process_hashtable(
         "url:{0}".format(url),
         options,
-        HTTP_TIMEOUT,
+        int(HTTP_TIMEOUT.total_seconds() * 1000),
         'http_cb_receiver',
         stash_id,
     )
@@ -479,7 +490,8 @@ class Notifier:
         self.current_notif = None   # current push notification
         self.waiting_until = None   # datetime we are waiting until, if waiting
         self.wait_id = None         # stash_id for our current wait, if any
-        self.bonus_delay = 0  # total extra delay accrued between notifications
+        # total extra delay accrued between notifications
+        self.bonus_delay = timedelta(0)
         self.self_last_talked = datetime.min  # last time we talked in the buff
         self.currently_sending = False  # if we are sending a notif right now
 
@@ -533,7 +545,7 @@ class Notifier:
             return
 
         if (
-            (datetime.utcnow() - self.self_last_talked).total_seconds()
+            (datetime.utcnow() - self.self_last_talked)
             < config['ignore_after_talk']
         ):
             debug("Self talked in channel too recently, ignoring")
@@ -567,12 +579,12 @@ class Notifier:
         # if we are already waiting, bump the timer until our delay_after_talk
         self.set_delay(config['delay_after_talk'])
 
-    def set_delay(self, seconds):
+    def set_delay(self, delay_duration):
         """
         Ensure that there is a running timer hook for the time <seconds> from
         now, and begin a wait loop if none is running.
         """
-        after_delay = datetime.utcnow() + timedelta(seconds=seconds)
+        after_delay = datetime.utcnow() + delay_duration
         if self.is_waiting():
             # maybe wait longer if we are already waiting
             self.waiting_until = max(self.waiting_until, after_delay)
@@ -614,19 +626,18 @@ class Notifier:
             if remaining_wait_time > TIMER_GRACE:
                 # do not wait more than max_poll_delay seconds at a time, and
                 # max_poll_delay cannot be less than MIN_POLL_DELAY
-                full_seconds = remaining_wait_time.total_seconds()
-                seconds = min(
-                    full_seconds,
+                to_wait = min(
+                    remaining_wait_time,
                     max(config['max_poll_delay'], MIN_POLL_DELAY)
                 )
                 debug(
                     (
                         "Waiting all {0} seconds for {2}"
-                        if seconds == full_seconds else
+                        if to_wait == remaining_wait_time else
                         "Waiting {0} out of {1} seconds for {2}"
-                    ).format(seconds, full_seconds, self.buffer)
+                    ).format(to_wait, remaining_wait_time, self.buffer)
                 )
-                await self.wait(seconds)
+                await self.wait(to_wait)
                 # Check on notif dismissal if we have anything to send
                 if self.has_unsent() and await self.check_dismissal():
                     break  # notif was dismissed!
@@ -733,7 +744,7 @@ class Notifier:
             debug("Canceling wait for {0}".format(self.buffer))
             cancel_wait(self.wait_id)
         self.waiting_until = None
-        self.bonus_delay = 0
+        self.bonus_delay = timedelta(0)
         # delete sent messages
         del self.messages[:]
         self.message_count = 0
